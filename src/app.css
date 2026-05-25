@@ -1,0 +1,20 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import 'shadcn-svelte/tailwind.css';
+@import '@fontsource-variable/inter';
+
+@layer base {
+	* {
+		border-color: var(--color-border);
+		outline-color: color-mix(in oklch, var(--color-ring) 50%, transparent);
+	}
+
+	body {
+		background-color: var(--color-background);
+		color: var(--color-foreground);
+	}
+
+	html {
+		font-family: var(--font-sans);
+	}
+}
