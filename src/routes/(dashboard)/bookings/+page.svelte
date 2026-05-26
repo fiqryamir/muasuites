@@ -2,53 +2,65 @@
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
 	import { z } from 'zod';
-	import { toast } from 'svelte-sonner'; // Import Sonner
+	import { toast } from 'svelte-sonner';
 	import * as Card from '$lib/components/ui/card';
 	import { Button } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
+	import { Separator } from '$lib/components/ui/separator';
+	import {
+		InputGroup,
+		InputGroupAddon,
+		InputGroupInput,
+		InputGroupText
+	} from '$lib/components/ui/input-group';
+	import * as Select from '$lib/components/ui/select';
+	import { Field, FieldGroup, FieldLabel } from '$lib/components/ui/field';
 
-	// Grab the request-scoped Supabase client and session reactively from SvelteKit
 	let supabase = $derived(page.data.supabase);
 	let session = $derived(page.data.session);
 
-	// State Management
 	let loading = $state(true);
 	let userId = $state('');
 	let muaSlug = $state('');
-	let muaPlan = $state('FREE');
-	let accessToken = $state(''); 
+	let muaPlan = $state<'FREE' | 'PRO' | 'ELITE'>('FREE');
+	let accessToken = $state('');
 
 	let bookings = $state<any[]>([]);
 
-	// Link Generator Form State
+	// Generator state
 	let showGenerator = $state(false);
-	let eventDate = $state('');
 	let transportOverride = $state(0);
 	let customSurcharge = $state(0);
 	let surchargeRemark = $state('');
 	let depositModeOverride = $state<'FIXED' | 'PERCENT'>('FIXED');
 	let depositValueOverride = $state<number | null>(null);
-
-	// Client-side validation schema for generating links
-	const inviteGeneratorSchema = z.object({
-		// eventDate: z.string().min(1, 'Please select an event date.'),
-		transportOverride: z.number().nonnegative('Transport fee override must be 0 or greater.'),
-		customSurcharge: z.number().nonnegative('Custom surcharge must be 0 or greater.'),
-		surchargeRemark: z.string().optional(),
-		depositValueOverride: z.number().positive('Deposit value override must be greater than 0.').nullable()
-	});
-
 	let generatedUrl = $state('');
 	let generating = $state(false);
 
-	let pendingCount = $derived(bookings.filter((b) => b.status === 'PENDING_APPROVAL').length);
-	let confirmedCount = $derived(
-		bookings.filter((b) => b.status === 'CONFIRMED' || b.status === 'FULLY_PAID').length
-	);
+	// Collapsible history
+	let showPast = $state(false);
 
 	const todayStr = new Date().toISOString().split('T')[0];
 
-	let activeBookingsCount = $derived(
+	const pendingBookings = $derived(
+		bookings.filter((b) => b.status === 'PENDING_APPROVAL')
+	);
+
+	const upcomingBookings = $derived(
+		bookings.filter(
+			(b) =>
+				['CONFIRMED', 'FULLY_PAID'].includes(b.status) &&
+				b.event_date >= todayStr
+		)
+	);
+
+	const pastBookings = $derived(
+		bookings.filter(
+			(b) => b.event_date < todayStr || b.status === 'REJECTED'
+		)
+	);
+
+	const activeBookingsCount = $derived(
 		bookings.filter(
 			(b) =>
 				b.event_date >= todayStr &&
@@ -56,11 +68,39 @@
 		).length
 	);
 
+	const inviteSchema = z.object({
+		transportOverride: z.number().nonnegative('Transport fee must be 0 or more.'),
+		customSurcharge: z.number().nonnegative('Surcharge must be 0 or more.'),
+		surchargeRemark: z.string().optional(),
+		depositValueOverride: z.number().positive('Must be greater than 0.').nullable()
+	});
+
+	// Helpers
+	function fmtDate(d: string) {
+		return new Date(d + 'T00:00:00').toLocaleDateString('en-MY', {
+			day: 'numeric',
+			month: 'short',
+			year: 'numeric'
+		});
+	}
+
+	function fmtTime(t: string) {
+		if (!t) return '';
+		const [h, m] = t.split(':');
+		const hr = parseInt(h);
+		const sfx = hr >= 12 ? 'PM' : 'AM';
+		const dh = hr > 12 ? hr - 12 : hr === 0 ? 12 : hr;
+		return `${dh}:${m} ${sfx}`;
+	}
+
+	function fmtCurrency(a: number | string) {
+		return `RM ${Number(a).toLocaleString('en-MY', { minimumFractionDigits: 2 })}`;
+	}
+
 	onMount(async () => {
 		if (!session) return;
-
 		userId = session.user.id;
-		accessToken = session.access_token || ''; 
+		accessToken = session.access_token || '';
 
 		const { data: mua } = await supabase
 			.from('muas')
@@ -73,18 +113,18 @@
 			muaPlan = mua.subscription_plan;
 		}
 
-		await loadDashboardData();
+		await loadBookings();
 	});
 
-	async function loadDashboardData() {
+	async function loadBookings() {
 		loading = true;
-		const { data: bks } = await supabase
+		const { data } = await supabase
 			.from('bookings')
 			.select('*, packages(*)')
 			.eq('mua_id', userId)
 			.order('event_date', { ascending: true });
-		
-		bookings = bks || [];
+
+		bookings = data || [];
 		loading = false;
 	}
 
@@ -93,24 +133,22 @@
 		generating = true;
 		generatedUrl = '';
 
-		// Validate using Zod client-side
-		const validation = inviteGeneratorSchema.safeParse({
-			// eventDate,
+		const result = inviteSchema.safeParse({
 			transportOverride,
 			customSurcharge,
 			surchargeRemark,
 			depositValueOverride
 		});
 
-		if (!validation.success) {
+		if (!result.success) {
 			generating = false;
-			toast.warning(validation.error.issues[0].message);
+			toast.warning(result.error.issues[0].message);
 			return;
 		}
 
-		const token = crypto.randomUUID(); 
-		const expiresAt = new Date();
-		expiresAt.setHours(expiresAt.getHours() + 48); 
+		const token = crypto.randomUUID();
+		const expires = new Date();
+		expires.setHours(expires.getHours() + 48);
 
 		const { data: invite, error } = await supabase
 			.from('invites')
@@ -125,7 +163,7 @@
 				deposit_mode_override: depositValueOverride !== null ? depositModeOverride : null,
 				deposit_value_override: depositValueOverride !== null ? depositValueOverride : null,
 				is_used: false,
-				expires_at: expiresAt.toISOString()
+				expires_at: expires.toISOString()
 			})
 			.select()
 			.single();
@@ -133,25 +171,30 @@
 		generating = false;
 
 		if (error) {
-			toast.error('Error generating invite link: ' + error.message);
+			toast.error('Could not generate link: ' + error.message);
 		} else if (invite) {
 			generatedUrl = `${window.location.origin}/${muaSlug}/${token}`;
-			toast.success('Personalized invite link successfully generated!');
+			toast.success('Invite link ready.');
 		}
 	}
 
 	function copyToClipboard() {
 		navigator.clipboard.writeText(generatedUrl);
-		toast.success('Booking link copied to clipboard!');
+		toast.success('Copied.');
 	}
 
-	async function handleApprovePayment(booking: any) {
-		if (
-			!confirm(
-				`Are you sure you want to approve payment from ${booking.client_name || 'this client'}?`
-			)
-		)
-			return;
+	function resetGenerator() {
+		showGenerator = false;
+		generatedUrl = '';
+		transportOverride = 0;
+		customSurcharge = 0;
+		surchargeRemark = '';
+		depositModeOverride = 'FIXED';
+		depositValueOverride = null;
+	}
+
+	async function handleApprove(booking: any) {
+		if (!confirm(`Approve payment from ${booking.client_name || 'this client'}?`)) return;
 
 		const { error } = await supabase
 			.from('bookings')
@@ -159,192 +202,251 @@
 			.eq('id', booking.id);
 
 		if (error) {
-			toast.error('Failed to approve booking: ' + error.message);
+			toast.error('Approval failed: ' + error.message);
 		} else {
-			toast.success('Booking successfully confirmed!');
-			await loadDashboardData();
+			toast.success('Booking confirmed.');
+			await loadBookings();
 		}
 	}
 
-	let pendingBookings = $derived(bookings.filter((b) => b.status === 'PENDING_APPROVAL'));
-	let upcomingBookings = $derived(
-		bookings.filter(
-			(b) =>
-				b.status === 'CONFIRMED' &&
-				new Date(b.event_date) >= new Date(new Date().setHours(0, 0, 0, 0))
-		)
-	);
-	let pastBookings = $derived(
-		bookings.filter(
-			(b) =>
-				new Date(b.event_date) < new Date(new Date().setHours(0, 0, 0, 0)) ||
-				['REJECTED'].includes(b.status)
-		)
+	const waMessage = $derived(
+		`Hi! Here is your booking link to secure your slot:\n\n${generatedUrl}\n\nPlease complete the deposit within 48 hours to confirm your date. Thank you!`
 	);
 </script>
 
 {#if loading}
-	<div class="flex items-center justify-center py-12">
-		<p class="animate-pulse text-sm font-semibold text-slate-500">Loading bookings workspace...</p>
+	<div class="flex items-center justify-center py-24">
+		<div class="flex items-center gap-3 text-muted-foreground">
+			<svg
+				class="h-4 w-4 animate-spin"
+				xmlns="http://www.w3.org/2000/svg"
+				fill="none"
+				viewBox="0 0 24 24"
+			>
+				<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"
+				></circle>
+				<path
+					class="opacity-75"
+					fill="currentColor"
+					d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+				></path>
+			</svg>
+			<span class="text-sm">Loading bookings...</span>
+		</div>
 	</div>
 {:else}
-	<div class="mx-auto max-w-4xl space-y-6">
-		<!-- Header Block -->
-		<div class="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
+	<div class="space-y-6 sm:space-y-8 animate-in-up">
+		<!-- Header -->
+		<div class="flex items-start justify-between gap-4">
 			<div>
-				<h1 class="text-2xl font-bold tracking-tight text-slate-900">Bookings Ledger</h1>
-				<p class="text-sm text-slate-500">
-					Track dynamic client checkouts and manage schedule locks.
+				<h1 class="text-2xl font-semibold tracking-tight">Bookings</h1>
+				<p class="mt-1 text-sm text-muted-foreground">
+					Your schedule and client checkouts at a glance.
 				</p>
 			</div>
 			<Button
+				variant={showGenerator ? 'outline' : 'default'}
+				class="shrink-0"
 				onclick={() => {
-					showGenerator = !showGenerator;
-					generatedUrl = '';
+					if (showGenerator) {
+						resetGenerator();
+					} else {
+						showGenerator = true;
+					}
 				}}
-				class="self-start bg-slate-900 text-white hover:bg-slate-800"
 			>
-				{showGenerator ? 'Close Generator' : '+ Create Invite Link'}
+				{showGenerator ? 'Close' : 'Create Link'}
 			</Button>
 		</div>
 
-		<!-- Stats Monitor -->
-		<div class="grid grid-cols-1 gap-4 md:grid-cols-3">
-			<Card.Root>
-				<Card.Header class="pb-2">
-					<Card.Description class="text-xs font-semibold tracking-wider text-amber-600 uppercase"
-						>Pending Approval</Card.Description
+		<!-- Quick Stats -->
+		<div class="grid grid-cols-3 overflow-hidden rounded-lg border border-border">
+			<div class="border-r border-border p-3 text-center sm:p-4">
+				<p class="text-xl font-semibold tabular-nums sm:text-2xl">
+					{pendingBookings.length}
+				</p>
+				<p class="mt-0.5 text-[11px] text-muted-foreground sm:text-xs">Pending</p>
+			</div>
+			<div class="border-r border-border p-3 text-center sm:p-4">
+				<p class="text-xl font-semibold tabular-nums sm:text-2xl">
+					{upcomingBookings.length}
+				</p>
+				<p class="mt-0.5 text-[11px] text-muted-foreground sm:text-xs">Confirmed</p>
+			</div>
+			<div class="p-3 text-center sm:p-4">
+				<p class="text-xl font-semibold tabular-nums sm:text-2xl">
+					{activeBookingsCount}<span
+						class="text-base font-normal text-muted-foreground sm:text-lg"
+						>{muaPlan === 'FREE' ? ' / 2' : ''}</span
 					>
-					<Card.Title class="text-2xl font-bold text-amber-950">{pendingCount}</Card.Title>
-				</Card.Header>
-			</Card.Root>
-			<Card.Root>
-				<Card.Header class="pb-2">
-					<Card.Description class="text-xs font-semibold tracking-wider text-emerald-600 uppercase"
-						>Confirmed Slots</Card.Description
-					>
-					<Card.Title class="text-2xl font-bold text-emerald-950">{confirmedCount}</Card.Title>
-				</Card.Header>
-			</Card.Root>
-			<Card.Root>
-				<Card.Header class="pb-2">
-					<Card.Description class="text-xs font-semibold tracking-wider text-slate-500 uppercase">
-						Active Capacity ({muaPlan} Plan)
-					</Card.Description>
-					<Card.Title class="text-2xl font-bold text-slate-900">
-						{activeBookingsCount}
-						{muaPlan === 'FREE' ? '/ 2' : 'slots used'}
-					</Card.Title>
-				</Card.Header>
-			</Card.Root>
+				</p>
+				<p class="mt-0.5 text-[11px] text-muted-foreground sm:text-xs">
+					{muaPlan === 'FREE' ? 'Free slots' : 'Active'}
+				</p>
+			</div>
 		</div>
 
 		<!-- Generator Panel -->
 		{#if showGenerator}
-			<Card.Root class="border-indigo-150 bg-indigo-50/10">
+			<Card.Root class="animate-in-up">
 				<Card.Header>
-					<Card.Title class="text-indigo-950">Dynamic Invite Link Generator</Card.Title>
-					<Card.Description
-						>Set the parameters for this bridal event. The link allows the client to finalize
-						checkout.</Card.Description
-					>
+					<Card.Title>Invite Link Generator</Card.Title>
+					<Card.Description>
+						Set fees for this client. The link lets them select a package, enter details, and pay
+						their deposit.
+					</Card.Description>
 				</Card.Header>
 				<Card.Content>
 					{#if generatedUrl}
-						<div
-							class="space-y-4 rounded-md border border-indigo-200 bg-indigo-50/50 p-4 text-center"
-						>
-							<p class="text-sm font-semibold text-indigo-900">Your custom invite link is ready!</p>
+						<div class="space-y-4">
+							<!-- Generated Link Display -->
 							<div
-								class="flex items-center space-x-2 overflow-x-auto rounded border border-slate-200 bg-white p-2 font-mono text-xs text-slate-700 select-all"
+								class="rounded-lg border border-border bg-muted/40 p-4"
 							>
-								<span>{generatedUrl}</span>
+								<p class="mb-2 text-xs font-medium text-muted-foreground">
+									Your invite link
+								</p>
+								<p
+									class="break-all font-mono text-sm text-foreground select-all"
+								>
+									{generatedUrl}
+								</p>
 							</div>
-							<div class="flex justify-center gap-3 pt-2">
-								<Button variant="outline" onclick={copyToClipboard}>Copy Link</Button>
-								<a
-									href={`https://wa.me/?text=Hi! Here is your personalized booking link to lock your slot: ${encodeURIComponent(generatedUrl)}`}
-									target="_blank"
-									class="inline-flex items-center justify-center rounded-md bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow transition hover:bg-emerald-700"
+
+							<!-- Action Buttons -->
+							<div class="flex flex-col gap-2 sm:flex-row sm:justify-end">
+								<Button variant="outline" onclick={copyToClipboard}>
+									Copy Link
+								</Button>
+								<Button
+									onclick={() =>
+										window.open(
+											`https://wa.me/?text=${encodeURIComponent(waMessage)}`,
+											'_blank'
+										)}
 								>
 									Share on WhatsApp
-								</a>
+								</Button>
+							</div>
+
+							<div class="flex justify-center pt-1">
+								<button
+									type="button"
+									onclick={() => (generatedUrl = '')}
+									class="text-xs text-muted-foreground hover:text-foreground transition-colors"
+								>
+									Generate another link
+								</button>
 							</div>
 						</div>
 					{:else}
 						<form onsubmit={handleGenerateLink} class="space-y-4">
-							<div class="grid grid-cols-1 gap-4 md:grid-cols-2">
-								<!-- <div class="space-y-1.5 md:col-span-2">
-									<label for="date" class="text-xs font-semibold text-slate-500 uppercase"
-										>Event Date</label
-									>
-									<Input id="date" type="date" bind:value={eventDate} required />
+							<FieldGroup class="gap-4">
+								<Field class="gap-2">
+									<FieldLabel htmlFor="transport">Transport Fee</FieldLabel>
+									<InputGroup>
+										<InputGroupAddon>
+											<InputGroupText class="text-muted-foreground"
+												>RM</InputGroupText
+											>
+										</InputGroupAddon>
+										<InputGroupInput
+											id="transport"
+											type="number"
+											step="0.01"
+											placeholder="0.00"
+											bind:value={transportOverride}
+										/>
+									</InputGroup>
+								</Field>
+								<!-- <div class="space-y-2">
+									<label for="transport" class="text-sm font-medium">
+										Transport Fee
+									</label>
 								</div> -->
 
-								<div class="space-y-1.5">
-									<label
-										for="dep_mode_override"
-										class="text-xs font-semibold text-slate-500 uppercase"
-										>Custom Deposit Mode (Optional)</label
-									>
-									<select
-										id="dep_mode_override"
-										class="flex h-10 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm focus:outline-none"
-										bind:value={depositModeOverride}
-									>
-										<option value="FIXED">Fixed Deposit (RM)</option>
-										<option value="PERCENT">Percentage of Total (%)</option>
-									</select>
-								</div>
+								<Field class="gap-2">
+									<FieldLabel htmlFor="surcharge">Custom Surcharge</FieldLabel>
+									<InputGroup>
+										<InputGroupAddon>
+											<InputGroupText class="text-muted-foreground"
+												>RM</InputGroupText
+											>
+										</InputGroupAddon>
+										<InputGroupInput
+											id="surcharge"
+											type="number"
+											step="0.01"
+											placeholder="0.00"
+											bind:value={customSurcharge}
+										/>
+									</InputGroup>
+								</Field>
 
-								<div class="space-y-1.5">
-									<label
-										for="dep_val_override"
-										class="text-xs font-semibold text-slate-500 uppercase"
-										>Custom Deposit Value (Optional)</label
-									>
+								<Field class="gap-2">
+									<FieldLabel htmlFor="remark">Surcharge Remark</FieldLabel>
 									<Input
-										id="dep_val_override"
-										type="number"
-										step="0.01"
-										placeholder="Leave empty to use standard settings"
-										bind:value={depositValueOverride}
-									/>
-								</div>
+									id="remark"
+									placeholder="e.g., early morning surcharge, holiday fee"
+									bind:value={surchargeRemark}
+								/>
+								</Field>
+							</FieldGroup>
 
-								<div class="space-y-1.5">
-									<label for="transport" class="text-xs font-semibold text-slate-500 uppercase"
-										>Transport Fee Surcharge (RM)</label
-									>
-									<Input id="transport" type="number" step="0.01" bind:value={transportOverride} />
-								</div>
+							<Separator />
 
-								<div class="space-y-1.5">
-									<label for="surcharge" class="text-xs font-semibold text-slate-500 uppercase"
-										>Custom Fee Surcharge (RM)</label
-									>
-									<Input id="surcharge" type="number" step="0.01" bind:value={customSurcharge} />
-								</div>
-
-								<div class="space-y-1.5 md:col-span-2">
-									<label for="remark" class="text-xs font-semibold text-slate-500 uppercase"
-										>Custom Surcharge Remarks</label
-									>
-									<Input
-										id="remark"
-										placeholder="E.g., early morning markup / holiday fee"
-										bind:value={surchargeRemark}
-									/>
-								</div>
-							</div>
+							<!-- Deposit overrides -->
+							<FieldGroup class="grid gap-4 sm:grid-cols-2">
+								<!-- Deposit Mode Selection -->
+								<Field class="gap-2">
+									<FieldLabel htmlFor="dep_mode">
+										Deposit Override <span class="font-normal text-muted-foreground">(optional)</span>
+									</FieldLabel>
+									<Select.Root type="single" bind:value={depositModeOverride}>
+										<Select.Trigger id="dep_mode" class="flex h-10 w-full items-center justify-between rounded-full border-none bg-muted px-4 py-2 text-sm ring-offset-background focus:ring-2 focus:ring-ring">
+											{depositModeOverride === 'FIXED' ? 'Fixed Amount (RM)' : 
+											 depositModeOverride === 'PERCENT' ? 'Percentage (%)' : 
+											 'Select mode'}
+										</Select.Trigger>
+										<Select.Content>
+											<Select.Item value="FIXED">Fixed Amount (RM)</Select.Item>
+											<Select.Item value="PERCENT">Percentage (%)</Select.Item>
+										</Select.Content>
+									</Select.Root>
+								</Field>
+							
+								<!-- Deposit Value Input -->
+								<Field class="gap-2">
+									<FieldLabel htmlFor="dep_val">
+										Override Value <span class="font-normal text-muted-foreground">(optional)</span>
+									</FieldLabel>
+									<InputGroup>
+										{#if depositModeOverride === 'FIXED'}
+											<InputGroupAddon>
+												<InputGroupText class="text-muted-foreground">RM</InputGroupText>
+											</InputGroupAddon>
+										{/if}
+							
+										<InputGroupInput
+											id="dep_val"
+											type="number"
+											step="0.01"
+											placeholder="Leave empty for default"
+											bind:value={depositValueOverride}
+										/>
+							
+										{#if depositModeOverride === 'PERCENT'}
+											<InputGroupAddon>
+												<InputGroupText class="text-muted-foreground">%</InputGroupText>
+											</InputGroupAddon>
+										{/if}
+									</InputGroup>
+								</Field>
+							</FieldGroup>
 
 							<div class="flex justify-end pt-2">
-								<Button
-									type="submit"
-									disabled={generating}
-									class="bg-indigo-650 text-white hover:bg-indigo-700"
-								>
-									{generating ? 'Generating Invite Link...' : 'Generate and Copy Link'}
+								<Button type="submit" disabled={generating}>
+									{generating ? 'Generating...' : 'Generate Link'}
 								</Button>
 							</div>
 						</form>
@@ -353,144 +455,234 @@
 			</Card.Root>
 		{/if}
 
-		<!-- Listings segmented by lifecycle -->
-		<div class="space-y-6">
-			<!-- Section A: Pending Verification -->
-			<div>
-				<h3 class="mb-2 text-sm font-bold tracking-wider text-amber-800 uppercase">
-					Pending Verification ({pendingBookings.length})
-				</h3>
-				<div class="grid grid-cols-1 gap-4">
-					{#each pendingBookings as booking}
-						<Card.Root class="border-amber-100 bg-amber-50/10">
-							<Card.Content
-								class="flex flex-col items-start justify-between gap-4 p-4 sm:flex-row sm:items-center"
+		<!-- Empty state when nothing exists -->
+		{#if bookings.length === 0 && !showGenerator}
+			<div
+				class="rounded-lg border border-dashed border-border py-12 text-center space-y-2"
+			>
+				<p class="text-sm font-medium">No bookings yet</p>
+				<p class="text-xs text-muted-foreground max-w-xs mx-auto">
+					Create an invite link and share it with your client on WhatsApp. Their deposit
+					payment will appear here for review.
+				</p>
+				<div class="pt-2">
+					<Button onclick={() => (showGenerator = true)}>Create Your First Link</Button>
+				</div>
+			</div>
+		{:else}
+			<!-- Pending Review -->
+			{#if pendingBookings.length > 0}
+				<section class="space-y-3">
+					<div class="flex items-center gap-2">
+						<span class="h-2 w-2 rounded-full bg-primary"></span>
+						<h2 class="text-sm font-semibold">
+							Pending Review
+							<span class="font-normal text-muted-foreground"
+								>({pendingBookings.length})</span
 							>
-								<div>
-									<div class="flex items-center space-x-2">
-										<span
-											class="rounded bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800"
-											>Review Receipt</span
-										>
-										<span class="font-bold text-slate-900"
-											>{booking.client_name || 'Anonymous Client'}</span
-										>
+						</h2>
+					</div>
+
+					<div class="space-y-2">
+						{#each pendingBookings as booking}
+							<Card.Root>
+								<Card.Content class="space-y-3">
+									<div class="flex items-start justify-between gap-3">
+										<div class="min-w-0 flex-1 space-y-0.5">
+											<p class="text-sm font-medium truncate">
+												{booking.client_name || 'Anonymous'}
+											</p>
+											<p class="text-xs text-muted-foreground">
+												{fmtDate(booking.event_date)}
+												{#if booking.packages?.name}
+													&middot; {booking.packages.emoji}
+													{booking.packages.name}
+												{/if}
+											</p>
+										</div>
+										<div class="shrink-0 text-right">
+											<p class="text-sm font-semibold tabular-nums text-primary">
+												{fmtCurrency(booking.deposit_amount)}
+											</p>
+											<p class="text-[11px] text-muted-foreground">deposit</p>
+										</div>
 									</div>
-									<p class="pt-1 text-xs text-slate-500">
-										Event Date: <span class="font-medium text-slate-800">{booking.event_date}</span>
-										| Total:
-										<span class="font-medium text-slate-800">RM {booking.total_amount}</span>
-										| Paid Deposit:
-										<span class="font-semibold text-emerald-700">RM {booking.deposit_amount}</span>
-									</p>
-								</div>
-								<div class="flex items-center gap-2 self-end sm:self-auto">
-									{#if booking.receipt_url}
+
+									<div class="flex items-center gap-2 pt-1">
+										{#if booking.receipt_url}
+											<a
+												href={booking.receipt_url}
+												target="_blank"
+												class="text-xs text-muted-foreground hover:text-foreground underline underline-offset-2 transition-colors"
+											>
+												View receipt
+											</a>
+										{/if}
+										<div class="flex-1"></div>
+										<Button
+											size="sm"
+											onclick={() => handleApprove(booking)}
+										>
+											Approve
+										</Button>
+									</div>
+								</Card.Content>
+							</Card.Root>
+						{/each}
+					</div>
+				</section>
+			{/if}
+
+			<!-- Upcoming Schedule -->
+			<section class="space-y-3">
+				<h2 class="text-sm font-semibold">
+					Upcoming
+					<span class="font-normal text-muted-foreground"
+						>({upcomingBookings.length})</span
+					>
+				</h2>
+
+				{#if upcomingBookings.length > 0}
+					<div class="space-y-2">
+						{#each upcomingBookings as booking}
+							<Card.Root>
+								<Card.Content class="">
+									<div class="flex items-start justify-between gap-3">
+										<div class="min-w-0 flex-1 space-y-0.5">
+											<p class="text-sm font-medium truncate">
+												{booking.client_name || 'Client'}
+											</p>
+											<p class="text-xs text-muted-foreground">
+												{fmtDate(booking.event_date)}
+												{#if booking.event_time}
+													&middot; {fmtTime(booking.event_time)}
+												{/if}
+												{#if booking.venue_address}
+													<br class="sm:hidden" />
+													<span class="hidden sm:inline">&middot;</span>
+													{booking.venue_address}
+												{/if}
+											</p>
+											{#if booking.packages?.name}
+												<p class="text-xs text-muted-foreground">
+													{booking.packages.emoji}
+													{booking.packages.name}
+												</p>
+											{/if}
+										</div>
+										<div class="shrink-0 text-right space-y-0.5">
+											<p class="text-sm font-semibold tabular-nums">
+												{fmtCurrency(booking.total_amount)}
+											</p>
+											{#if booking.balance_amount > 0}
+												<p class="text-[11px] text-muted-foreground">
+													Balance: {fmtCurrency(booking.balance_amount)}
+												</p>
+											{/if}
+										</div>
+									</div>
+
+									<div class="flex items-center justify-end gap-2 pt-3">
+										{#if booking.client_phone}
+											<a
+												href={`https://wa.me/${booking.client_phone?.replace?.(/^0/, '60') || booking.client_phone}`}
+												target="_blank"
+												class="inline-flex h-8 items-center rounded-md px-3 text-xs text-muted-foreground hover:text-foreground transition-colors"
+											>
+												WhatsApp
+											</a>
+										{/if}
 										<a
-											href={booking.receipt_url}
+											href={`/api/calendar/${booking.id}?token=${accessToken}`}
 											target="_blank"
-											class="mr-2 text-xs font-medium text-slate-600 underline hover:text-slate-950"
+											class="inline-flex h-8 items-center rounded-md border border-border bg-background px-3 text-xs font-medium hover:bg-muted transition-colors"
 										>
-											View Receipt File
+											Download .ics
 										</a>
-									{/if}
-									<Button
-										variant="outline"
-										size="sm"
-										onclick={() => handleApprovePayment(booking)}
-										class="border-amber-200 text-amber-800 hover:bg-amber-100"
-									>
-										Approve Payment
-									</Button>
-								</div>
-							</Card.Content>
-						</Card.Root>
-					{:else}
-						<p class="text-xs text-slate-400 italic py-2">No payments awaiting review.</p>
-					{/each}
-				</div>
-			</div>
-
-			<!-- Section B: Upcoming Calendar Schedule -->
-			<div>
-				<h3 class="mb-2 text-sm font-bold tracking-wider text-slate-800 uppercase">
-					Upcoming Schedule ({upcomingBookings.length})
-				</h3>
-				<div class="grid grid-cols-1 gap-4">
-					{#each upcomingBookings as booking}
-						<Card.Root>
-							<Card.Content
-								class="flex flex-col items-start justify-between gap-4 p-4 sm:flex-row sm:items-center"
-							>
-								<div>
-									<h4 class="font-bold text-slate-900">
-										{booking.client_name} ({booking.client_phone})
-									</h4>
-									<p class="pt-1 text-xs text-slate-500">
-										Date: <span class="font-semibold text-slate-700">{booking.event_date}</span> @
-										<span class="font-semibold text-slate-700">{booking.event_time}</span>
-										| Venue:
-										<span class="font-medium text-slate-700">{booking.venue_address || 'TBD'}</span>
-									</p>
-								</div>
-								<div class="flex items-center gap-4 self-end sm:self-auto">
-									<div class="text-right text-xs">
-										<span class="font-bold text-slate-900">RM {booking.total_amount}</span>
-										<p class="text-[10px] font-medium text-slate-400">
-											Balance: RM {booking.balance_amount}
-										</p>
 									</div>
-									<a
-										href={`/api/calendar/${booking.id}?token=${accessToken}`}
-										target="_blank"
-										class="inline-flex shrink-0 items-center justify-center rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
-									>
-										Download .ics
-									</a>
-								</div>
-							</Card.Content>
-						</Card.Root>
-					{:else}
-						<p class="text-xs text-slate-400 italic py-2">
-							No upcoming confirmed events scheduled.
-						</p>
-					{/each}
-				</div>
-			</div>
+								</Card.Content>
+							</Card.Root>
+						{/each}
+					</div>
+				{:else}
+					<div class="rounded-lg border border-dashed border-border py-8 text-center">
+						<p class="text-xs text-muted-foreground">No upcoming confirmed events.</p>
+					</div>
+				{/if}
+			</section>
 
-			<!-- Section C: Past History -->
-			<div>
-				<h3 class="mb-2 text-sm font-bold tracking-wider text-slate-400 uppercase">
-					Completed & Past History ({pastBookings.length})
-				</h3>
-				<div class="grid grid-cols-1 gap-4 opacity-75">
-					{#each pastBookings as booking}
-						<Card.Root class="bg-slate-50">
-							<Card.Content class="flex items-center justify-between gap-4 p-4">
-								<div>
-									<span class="text-xs font-medium text-slate-500 uppercase">{booking.status}</span>
-									<h4 class="font-semibold text-slate-700">
-										{booking.client_name || 'Past Client'}
-									</h4>
-									<p class="text-[10px] text-slate-400">
-										{booking.event_date} | {booking.packages?.name || 'Service'}
-									</p>
-								</div>
-								<div class="flex items-center gap-4">
-									<span class="text-xs font-semibold text-slate-700">RM {booking.total_amount}</span>
-									<a
-										href={`/api/calendar/${booking.id}?token=${accessToken}`}
-										target="_blank"
-										class="inline-flex shrink-0 items-center justify-center rounded-md border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
-									>
-										Download .ics
-									</a>
-								</div>
-							</Card.Content>
-						</Card.Root>
-					{/each}
-				</div>
-			</div>
-		</div>
+			<!-- Past History (Collapsible) -->
+			{#if pastBookings.length > 0}
+				<Separator />
+
+				<section class="space-y-3">
+					<button
+						type="button"
+						onclick={() => (showPast = !showPast)}
+						class="flex w-full items-center justify-between text-sm font-semibold hover:text-foreground transition-colors text-muted-foreground"
+					>
+						<span>
+							History
+							<span class="font-normal">({pastBookings.length})</span>
+						</span>
+						<svg
+							class="h-4 w-4 transition-transform {showPast ? 'rotate-180' : ''}"
+							xmlns="http://www.w3.org/2000/svg"
+							fill="none"
+							viewBox="0 0 24 24"
+							stroke="currentColor"
+							stroke-width="2"
+						>
+							<path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+						</svg>
+					</button>
+
+					{#if showPast}
+						<div class="space-y-2 animate-in-up">
+							{#each pastBookings as booking}
+								<Card.Root class="bg-muted/30">
+									<Card.Content class="p-3 sm:p-4">
+										<div class="flex items-center justify-between gap-3">
+											<div class="min-w-0 flex-1 space-y-0.5">
+												<div class="flex items-center gap-2">
+													<p class="text-sm font-medium truncate">
+														{booking.client_name || 'Past Client'}
+													</p>
+													{#if booking.status === 'REJECTED'}
+														<span
+															class="inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[10px] font-medium bg-muted text-muted-foreground"
+														>
+															Rejected
+														</span>
+													{/if}
+												</div>
+												<p class="text-xs text-muted-foreground">
+													{fmtDate(booking.event_date)}
+													{#if booking.packages?.name}
+														&middot; {booking.packages.name}
+													{/if}
+												</p>
+											</div>
+											<div class="flex items-center gap-3 shrink-0">
+												<span class="text-sm font-medium tabular-nums text-muted-foreground">
+													{fmtCurrency(booking.total_amount)}
+												</span>
+												<a
+													href={`/api/calendar/${booking.id}?token=${accessToken}`}
+													target="_blank"
+													class="inline-flex h-7 items-center rounded-md border border-border bg-background px-2 text-[11px] font-medium hover:bg-muted transition-colors"
+												>
+													.ics
+												</a>
+											</div>
+										</div>
+									</Card.Content>
+								</Card.Root>
+							{/each}
+						</div>
+					{/if}
+				</section>
+			{/if}
+		{/if}
 	</div>
 {/if}

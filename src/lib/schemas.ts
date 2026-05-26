@@ -7,8 +7,8 @@ export const secureSlotSchema = z.object({
 	event_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, { message: 'Please select a valid event date.' }),
 	event_time: z.string().regex(/^\d{2}:\d{2}(:\d{2})?$/, { message: 'Please enter a valid target ready time.' }),
 	client_name: z.string().min(2, { message: 'Name must be at least 2 characters long.' }),
-	client_phone: z.string().regex(/^(1)[0-9]{7,9}$/, { 
-		message: 'Please enter a valid mobile number starting with 1 (e.g., 123456789).' 
+	client_phone: z.string().regex(/^(601)[0-9]{8,10}$/, {
+		message: 'Please enter a valid Malaysian mobile number.'
 	}),
 	venue_address: z.string().min(5, { message: 'Please provide a more complete venue location address.' }),
 	total_amount: z.coerce.number().nonnegative(),

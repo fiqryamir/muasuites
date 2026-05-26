@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
 	import { z } from 'zod';
-	import { toast } from 'svelte-sonner'; // Import Sonner
+	import { toast } from 'svelte-sonner';
 	import * as Card from '$lib/components/ui/card';
 	import { Button } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
@@ -10,59 +10,58 @@
 		InputGroup,
 		InputGroupAddon,
 		InputGroupInput,
-		InputGroupText,
-		} from "$lib/components/ui/input-group"
+		InputGroupText
+	} from '$lib/components/ui/input-group';
+	import { Separator } from '$lib/components/ui/separator';
+	import { Field, FieldGroup, FieldLabel } from '$lib/components/ui/field';
+	import * as Select from '$lib/components/ui/select';
 
-	// SvelteKit request-scoped reactive references
 	let supabase = $derived(page.data.supabase);
 	let session = $derived(page.data.session);
 
-	// UI State Variables
 	let loading = $state(true);
-	let updating = $state(false);
-	let addingPkg = $state(false);
+	let saving = $state(false);
+	let addingPackage = $state(false);
+	let testingTelegram = $state(false);
 
 	let userId = $state('');
 	let profile = $state<any>(null);
-	let config = $state<any>(null);
 	let packages = $state<any[]>([]);
 
-	// Config Input bindings
+	// Form state
 	let slug = $state('');
 	let studioName = $state('');
-	let whatsappNumber = $state('');
+	let whatsappLocal = $state('');
 	let telegramChatId = $state('');
 	let depositMode = $state<'FIXED' | 'PERCENT'>('FIXED');
 	let depositValue = $state(0);
 	let duitnowQrUrl = $state('');
-
-	// Zod Verification schemas
-	const configSchema = z.object({
-		slug: z.string()
-			.min(3, 'Slug handle must be at least 3 characters.')
-			.max(20, 'Slug handle must be 20 characters or less.')
-			.regex(/^[a-z0-9_]+$/, 'Slug must contain only lowercase letters, numbers, or underscores.'),
-		studioName: z.string().min(2, 'Studio name must be at least 2 characters.'),
-		whatsappNumber: z.string().regex(/^(601)[0-9]{8,10}$/, 'WhatsApp must be a valid Malaysian format (e.g., 60123456789).'),
-		depositValue: z.number().nonnegative('Default deposit value cannot be negative.'),
-		telegramChatId: z.string().optional()
-	});
-
-	const packageSchema = z.object({
-		pkgEmoji: z.string().emoji('Please enter a single valid emoji icon.'),
-		pkgName: z.string().min(3, 'Package title must be at least 3 characters.'),
-		pkgPrice: z.number().positive('Package price must be greater than RM 0.')
-	});
-
-	// File Upload State
 	let qrFile = $state<File | null>(null);
 
-	// Package form bindings
+	// Package form state
 	let pkgEmoji = $state('💄');
 	let pkgName = $state('');
 	let pkgPrice = $state(0);
 
-	let testingTelegram = $state(false);
+	const configSchema = z.object({
+		slug: z
+			.string()
+			.min(3, 'Handle must be at least 3 characters.')
+			.max(20, 'Handle must be 20 characters or less.')
+			.regex(/^[a-z0-9_]+$/, 'Only lowercase letters, numbers, and underscores.'),
+		studioName: z.string().min(2, 'Studio name must be at least 2 characters.'),
+		whatsappNumber: z
+			.string()
+			.regex(/^(601)[0-9]{8,10}$/, 'Valid Malaysian format required (e.g. 60123456789).'),
+		depositValue: z.number().nonnegative('Deposit cannot be negative.'),
+		telegramChatId: z.string().optional()
+	});
+
+	const packageSchema = z.object({
+		pkgEmoji: z.string().emoji('Enter a single emoji.'),
+		pkgName: z.string().min(3, 'Name must be at least 3 characters.'),
+		pkgPrice: z.number().positive('Price must be greater than RM 0.')
+	});
 
 	onMount(async () => {
 		if (!session) return;
@@ -73,7 +72,6 @@
 	async function loadSettings() {
 		loading = true;
 
-		// 1. Fetch profile slug and details
 		const { data: prof } = await supabase
 			.from('muas')
 			.select('slug, subscription_plan')
@@ -85,7 +83,6 @@
 			slug = prof.slug;
 		}
 
-		// 2. Fetch config settings
 		const { data: conf } = await supabase
 			.from('mua_configs')
 			.select('*')
@@ -93,23 +90,16 @@
 			.single();
 
 		if (conf) {
-			config = conf;
 			studioName = conf.studio_name || '';
-			whatsappNumber = conf.whatsapp_number || '';
 			telegramChatId = conf.telegram_chat_id || '';
 			depositMode = conf.deposit_mode || 'FIXED';
 			depositValue = parseFloat(conf.deposit_value || '0');
 			duitnowQrUrl = conf.duitnow_qr_url || '';
 
-			const rawPhone = conf.whatsapp_number || '';
-			if (rawPhone.startsWith('60')) {
-				whatsappNumber = rawPhone.substring(2);
-			} else {
-				whatsappNumber = rawPhone;
-			}
+			const raw = conf.whatsapp_number || '';
+			whatsappLocal = raw.startsWith('60') ? raw.substring(2) : raw;
 		}
 
-		// 3. Fetch Packages
 		const { data: pkgs } = await supabase
 			.from('packages')
 			.select('*')
@@ -123,90 +113,76 @@
 
 	function handleFileChange(e: Event) {
 		const target = e.target as HTMLInputElement;
-		if (target.files && target.files.length > 0) {
-			qrFile = target.files[0];
-		}
+		if (target.files?.length) qrFile = target.files[0];
 	}
 
-	async function handleUpdateConfig(e: Event) {
+	async function handleSaveConfig(e: Event) {
 		e.preventDefault();
-		updating = true;
+		saving = true;
 
-		const fullWhatsappNumber = `60${whatsappNumber}`;
+		const fullWa = `60${whatsappLocal}`;
 
-		// Client-side Zod validation
-		const validation = configSchema.safeParse({
+		const result = configSchema.safeParse({
 			slug,
 			studioName,
-			whatsappNumber: fullWhatsappNumber,
+			whatsappNumber: fullWa,
 			depositValue,
 			telegramChatId
 		});
 
-		if (!validation.success) {
-			updating = false;
-			toast.warning(validation.error.issues[0].message);
+		if (!result.success) {
+			saving = false;
+			toast.warning(result.error.issues[0].message);
 			return;
 		}
 
 		let finalQrUrl = duitnowQrUrl;
 
-		// Upload QR image if a file has been selected
 		if (qrFile) {
-			const allowedMimeTypes = ['image/jpeg', 'image/png', 'image/webp'];
-			if (!allowedMimeTypes.includes(qrFile.type)) {
-				updating = false;
-				toast.error('Invalid image type. Please select a PNG, JPG, or WebP file.');
+			const allowed = ['image/jpeg', 'image/png', 'image/webp'];
+			if (!allowed.includes(qrFile.type)) {
+				saving = false;
+				toast.error('Please upload a PNG, JPG, or WebP file.');
 				return;
 			}
 
-			const mimeToExt: Record<string, string> = {
-				'image/jpeg': 'jpg',
-				'image/png': 'png',
-				'image/webp': 'webp'
-			};
-			const fileExt = mimeToExt[qrFile.type] || 'jpg';
-			const filePath = `${userId}/duitnow_qr.${fileExt}`;
+			const ext = qrFile.type === 'image/jpeg' ? 'jpg' : qrFile.type.split('/')[1];
+			const path = `${userId}/duitnow_qr.${ext}`;
 
-			const { error: uploadError } = await supabase.storage
+			const { error: uploadErr } = await supabase.storage
 				.from('qr-codes')
-				.upload(filePath, qrFile, { 
-					upsert: true,
-					contentType: qrFile.type 
-				});
+				.upload(path, qrFile, { upsert: true, contentType: qrFile.type });
 
-			if (uploadError) {
-				updating = false;
-				toast.error('Error uploading QR code file: ' + uploadError.message);
+			if (uploadErr) {
+				saving = false;
+				toast.error('Upload failed: ' + uploadErr.message);
 				return;
 			}
 
-			const { data: { publicUrl } } = supabase.storage.from('qr-codes').getPublicUrl(filePath);
-			finalQrUrl = publicUrl;
+			const { data } = supabase.storage.from('qr-codes').getPublicUrl(path);
+			finalQrUrl = data.publicUrl;
 		}
 
-		// Update public.muas (slug custom booking handle)
-		const { error: profileError } = await supabase
+		const { error: slugErr } = await supabase
 			.from('muas')
 			.update({ slug })
 			.eq('id', userId);
 
-		if (profileError) {
-			updating = false;
-			if (profileError.code === '23505') {
-				toast.error('This custom link handle is already taken by another MUA.');
-			} else {
-				toast.error(profileError.message);
-			}
+		if (slugErr) {
+			saving = false;
+			toast.error(
+				slugErr.code === '23505'
+					? 'This booking link is already taken.'
+					: slugErr.message
+			);
 			return;
 		}
 
-		// Update public.mua_configs variables
-		const { error: configError } = await supabase
+		const { error: confErr } = await supabase
 			.from('mua_configs')
 			.update({
 				studio_name: studioName,
-				whatsapp_number: fullWhatsappNumber,
+				whatsapp_number: fullWa,
 				telegram_chat_id: telegramChatId,
 				deposit_mode: depositMode,
 				deposit_value: depositValue,
@@ -214,31 +190,26 @@
 			})
 			.eq('mua_id', userId);
 
-		updating = false;
+		saving = false;
 
-		if (configError) {
-			toast.error(configError.message);
+		if (confErr) {
+			toast.error(confErr.message);
 		} else {
-			toast.success('System settings successfully updated!');
-			qrFile = null; 
+			toast.success('Settings saved.');
+			qrFile = null;
 			await loadSettings();
 		}
 	}
 
 	async function handleAddPackage(e: Event) {
 		e.preventDefault();
-		addingPkg = true;
+		addingPackage = true;
 
-		// Client-side Zod validation
-		const validation = packageSchema.safeParse({
-			pkgEmoji,
-			pkgName,
-			pkgPrice
-		});
+		const result = packageSchema.safeParse({ pkgEmoji, pkgName, pkgPrice });
 
-		if (!validation.success) {
-			addingPkg = false;
-			toast.warning(validation.error.issues[0].message);
+		if (!result.success) {
+			addingPackage = false;
+			toast.warning(result.error.issues[0].message);
 			return;
 		}
 
@@ -249,7 +220,7 @@
 			emoji: pkgEmoji
 		});
 
-		addingPkg = false;
+		addingPackage = false;
 
 		if (error) {
 			toast.error(error.message);
@@ -257,32 +228,31 @@
 			pkgName = '';
 			pkgPrice = 0;
 			pkgEmoji = '💄';
-			toast.success('Service package added successfully!');
+			toast.success('Package added.');
 			await loadSettings();
 		}
 	}
 
-	async function testTelegramConnection() {
+	async function testTelegram() {
 		if (!telegramChatId) {
-			toast.warning('Please enter a Telegram Chat ID first.');
+			toast.warning('Enter your Telegram Chat ID first.');
 			return;
 		}
 
 		testingTelegram = true;
 
 		try {
-			const response = await fetch('/api/test-telegram', {
+			const res = await fetch('/api/test-telegram', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ chatId: telegramChatId })
 			});
+			const data = await res.json();
 
-			const result = await response.json();
-
-			if (result.success) {
-				toast.success('Test notification sent! Check your Telegram app.');
+			if (data.success) {
+				toast.success('Test sent — check your Telegram.');
 			} else {
-				toast.error(result.error || 'Failed to send Telegram connection test.');
+				toast.error(data.error || 'Failed to send test.');
 			}
 		} catch (err: any) {
 			toast.error(err.message);
@@ -293,209 +263,269 @@
 </script>
 
 {#if loading}
-	<div class="flex items-center justify-center py-12">
-		<p class="animate-pulse text-sm font-semibold text-slate-500">Loading settings...</p>
+	<div class="flex items-center justify-center py-24">
+		<div class="flex items-center gap-3 text-muted-foreground">
+			<svg
+				class="h-4 w-4 animate-spin"
+				xmlns="http://www.w3.org/2000/svg"
+				fill="none"
+				viewBox="0 0 24 24"
+			>
+				<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"
+				></circle>
+				<path
+					class="opacity-75"
+					fill="currentColor"
+					d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+				></path>
+			</svg>
+			<span class="text-sm">Loading settings...</span>
+		</div>
 	</div>
 {:else}
-	<div class="mx-auto max-w-3xl space-y-6">
-		<!-- Section 1: Business Identity & Profile Config -->
+	<div class="space-y-8 animate-in-up">
+		<!-- Page Header -->
+		<div class="flex items-start justify-between gap-4">
+			<div>
+				<h1 class="text-2xl font-semibold tracking-tight">Settings</h1>
+				<p class="mt-1 text-sm text-muted-foreground">
+					Manage your studio profile, payment details, and service packages.
+				</p>
+			</div>
+			{#if profile}
+				<span
+					class="inline-flex shrink-0 items-center rounded-full px-2.5 py-0.5 text-xs font-medium
+						{profile.subscription_plan === 'FREE'
+						? 'bg-muted text-muted-foreground'
+						: 'bg-primary/10 text-primary'}"
+				>
+					{profile.subscription_plan}
+				</span>
+			{/if}
+		</div>
+
+		<!-- Profile & Booking Card -->
 		<Card.Root>
 			<Card.Header>
-				<Card.Title>Studio Identity & Configurations</Card.Title>
-				<Card.Description>Configure your personal booking handle and contact info.</Card.Description>
+				<Card.Title>Profile & Booking</Card.Title>
+				<Card.Description>Your studio identity and how clients find and pay you.</Card.Description>
 			</Card.Header>
 			<Card.Content>
-				<form onsubmit={handleUpdateConfig} class="space-y-4">
-					<div class="grid grid-cols-1 gap-4 md:grid-cols-2">
-						<div class="space-y-1.5">
-							<label for="slug" class="text-xs font-semibold text-slate-500 uppercase"
-								>Custom Booking Handle</label
-							>
-							<InputGroup>
-								<InputGroupAddon>
-								  <InputGroupText>/</InputGroupText>
-								</InputGroupAddon>
-								<InputGroupInput id="slug" name="slug" bind:value={slug} required class="rounded-l-none" />
-							  </InputGroup>
-							<p class="text-[10px] text-slate-400">muasuite.com/{slug}</p>
-						</div>
-
-						<div class="space-y-1.5">
-							<label for="studio_name" class="text-xs font-semibold text-slate-500 uppercase"
-								>Studio Name</label
-							>
-							<Input id="studio_name" name="studio_name" bind:value={studioName} required />
-						</div>
-
-						<div class="space-y-1.5">
-							<label for="whatsapp_number" class="text-xs font-semibold text-slate-500 uppercase"
-								>WhatsApp Contact Number</label
-							>
-							<InputGroup>
-								<InputGroupAddon>
-								  <InputGroupText>+60</InputGroupText>
-								</InputGroupAddon>
-								<InputGroupInput id="whatsapp_number"
-								name="whatsapp_number"
-								placeholder="123456789"
-								bind:value={whatsappNumber}
-								class="rounded-l-none"
-								required />
-							  </InputGroup>
-							<p class="text-[9px] text-slate-400 mt-1">Enter digits without leading "0" or spaces (e.g., 123456789).</p>
-						</div>
-
-						<div class="space-y-1.5 md:col-span-1">
-							<label for="telegram_chat_id" class="text-xs font-semibold text-slate-500 uppercase"
-								>Telegram Chat ID</label
-							>
-							<div class="flex gap-2">
-								<Input
-									id="telegram_chat_id"
-									name="telegram_chat_id"
-									bind:value={telegramChatId}
-									placeholder="E.g., 12345678"
-								/>
-								<Button
-									type="button"
-									variant="outline"
-									disabled={testingTelegram || !telegramChatId}
-									onclick={testTelegramConnection}
-									class="shrink-0"
-								>
-									{testingTelegram ? 'Testing...' : 'Send Test'}
-								</Button>
-							</div>
-
-							<p class="text-[9px] text-slate-400 mt-1">
-								Get your ID by sending a message to <strong>@userinfobot</strong> on Telegram. Make sure
-								you click "Start" on your custom bot first!
-							</p>
-						</div>
-
-						<div class="space-y-1.5">
-							<label for="deposit_mode" class="text-xs font-semibold text-slate-500 uppercase"
-								>Default Deposit Fee Mode</label
-							>
-							<select
-								id="deposit_mode"
-								name="deposit_mode"
-								class="flex h-10 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm focus:outline-none"
-								bind:value={depositMode}
-							>
-								<option value="FIXED">Fixed Price (RM)</option>
-								<option value="PERCENT">Percentage (%)</option>
-							</select>
-						</div>
-
-						<div class="space-y-1.5">
-							<label for="deposit_value" class="text-xs font-semibold text-slate-500 uppercase"
-								>Deposit Value</label
-							>
-							<Input
-								id="deposit_value"
-								name="deposit_value"
-								type="number"
-								step="0.01"
-								bind:value={depositValue}
-								required
+				<form onsubmit={handleSaveConfig} class="space-y-6">
+					<!-- Booking Link -->
+					<Field class="gap-2">
+						<FieldLabel htmlFor="slug">Custom Booking Link</FieldLabel>
+						<InputGroup class="rounded-full bg-muted border-none overflow-hidden">
+							<InputGroupAddon class="pl-4">
+								<InputGroupText class="text-muted-foreground text-sm">muasuites.com/</InputGroupText>
+							</InputGroupAddon>
+							<InputGroupInput 
+								id="slug" 
+								bind:value={slug} 
+								required 
+								placeholder="your-handle"
+								class="border-none bg-transparent focus-visible:ring-0" 
 							/>
-						</div>
-
-						<!-- QR Upload Area -->
-						<div class="space-y-1.5 border-t border-slate-100 pt-4 md:col-span-2">
-							<label for="qr_code" class="text-xs font-bold text-slate-700 uppercase"
-								>Setup DuitNow QR Code Screenshot</label
+						</InputGroup>
+					</Field>
+		
+					<Separator />
+		
+					<!-- Contact Details -->
+					<FieldGroup class="grid gap-4 sm:grid-cols-2">
+						<Field class="gap-2">
+							<FieldLabel htmlFor="studio_name">Studio Name</FieldLabel>
+							<Input
+								id="studio_name"
+								bind:value={studioName}
+								required
+								placeholder="Glam by Sarah"
+								class="rounded-full bg-muted border-none px-4"
+							/>
+						</Field>
+						<Field class="gap-2">
+							<FieldLabel htmlFor="whatsapp">WhatsApp Number</FieldLabel>
+							<InputGroup class="rounded-full bg-muted border-none overflow-hidden">
+								<InputGroupAddon class="pl-4">
+									<InputGroupText class="text-muted-foreground text-sm">+60</InputGroupText>
+								</InputGroupAddon>
+								<InputGroupInput
+									id="whatsapp"
+									placeholder="123456789"
+									bind:value={whatsappLocal}
+									required
+									class="border-none bg-transparent focus-visible:ring-0"
+								/>
+							</InputGroup>
+						</Field>
+					</FieldGroup>
+		
+					<Separator />
+		
+					<!-- Telegram Notifications -->
+					<Field class="gap-2">
+						<FieldLabel htmlFor="telegram">Telegram Notifications</FieldLabel>
+						<div class="flex gap-2">
+							<Input
+								id="telegram"
+								bind:value={telegramChatId}
+								placeholder="Enter your Chat ID"
+								class="flex-1 rounded-full bg-muted border-none px-4"
+							/>
+							<Button
+								type="button"
+								variant="outline"
+								disabled={testingTelegram || !telegramChatId}
+								onclick={testTelegram}
+								class="rounded-full shrink-0"
 							>
-							<div class="grid grid-cols-1 items-center gap-4 md:grid-cols-2">
-								<div class="space-y-1.5">
-									<Input id="qr_code" type="file" accept="image/*" onchange={handleFileChange} />
-									<p class="text-[10px] text-slate-400">
-										Attach your bank's DuitNow QR code image so clients can transfer easily.
-									</p>
-								</div>
-								{#if duitnowQrUrl}
-									<div
-										class="flex flex-col items-center rounded border border-slate-100 bg-slate-50 p-2"
-									>
-										<span class="pb-1 text-[10px] font-semibold text-slate-400 uppercase"
-											>Current Active QR</span
-										>
-										<img
-											src={duitnowQrUrl}
-											alt="DuitNow QR Code"
-											class="h-28 w-28 rounded border border-slate-200 bg-white object-contain p-1"
-										/>
-									</div>
-								{/if}
-							</div>
+								{testingTelegram ? 'Sending...' : 'Test'}
+							</Button>
 						</div>
+						<p class="px-2 text-xs text-muted-foreground">
+							Send a message to <span class="font-medium text-foreground">@userinfobot</span> to get your ID.
+						</p>
+					</Field>
+		
+					<Separator />
+		
+					<!-- Payment Setup -->
+					<div class="space-y-4">
+						<FieldGroup class="grid gap-4 sm:grid-cols-2">
+							<Field class="gap-2">
+								<FieldLabel htmlFor="deposit_mode">Deposit Type</FieldLabel>
+								<Select.Root type="single" bind:value={depositMode}>
+									<Select.Trigger 
+										id="deposit_mode" 
+										class="flex h-10 w-full items-center justify-between rounded-full border-none bg-muted px-4 py-2 text-sm ring-offset-background focus:ring-2 focus:ring-ring"
+									>
+										{depositMode === 'FIXED' ? 'Fixed Amount (RM)' : 'Percentage (%)'}
+										<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="opacity-50"><path d="m6 9 6 6 6-6"/></svg>
+									</Select.Trigger>
+									<Select.Content>
+										<Select.Item value="FIXED">Fixed Amount (RM)</Select.Item>
+										<Select.Item value="PERCENT">Percentage (%)</Select.Item>
+									</Select.Content>
+								</Select.Root>
+							</Field>
+		
+							<Field class="gap-2">
+								<FieldLabel htmlFor="deposit_value">
+									{depositMode === 'FIXED' ? 'Deposit Amount' : 'Deposit Percentage'}
+								</FieldLabel>
+								<InputGroup class="rounded-full bg-muted border-none overflow-hidden">
+									{#if depositMode === 'FIXED'}
+										<InputGroupAddon class="pl-4">
+											<InputGroupText class="text-muted-foreground text-sm">RM</InputGroupText>
+										</InputGroupAddon>
+									{/if}
+									<InputGroupInput
+										id="deposit_value"
+										type="number"
+										step="0.01"
+										bind:value={depositValue}
+										required
+										class="border-none bg-transparent focus-visible:ring-0"
+									/>
+									{#if depositMode === 'PERCENT'}
+										<InputGroupAddon class="pr-4">
+											<InputGroupText class="text-muted-foreground text-sm">%</InputGroupText>
+										</InputGroupAddon>
+									{/if}
+								</InputGroup>
+							</Field>
+						</FieldGroup>
+		
+						<Field class="gap-2">
+							<FieldLabel htmlFor="qr_code">DuitNow QR Code</FieldLabel>
+							<Input
+								id="qr_code"
+								type="file"
+								accept="image/png,image/jpeg,image/webp"
+								onchange={handleFileChange}
+								class=""
+							/>
+						</Field>
+		
+						{#if duitnowQrUrl}
+							<div class="flex items-center gap-4 rounded-2xl border border-border bg-muted/40 p-4">
+								<img
+									src={duitnowQrUrl}
+									alt="DuitNow QR Code"
+									class="h-20 w-20 rounded-lg border border-border bg-white object-contain p-1"
+								/>
+								<div class="space-y-0.5">
+									<p class="text-sm font-medium">Current QR Code</p>
+									<p class="text-xs text-muted-foreground">Visible to clients during checkout.</p>
+								</div>
+							</div>
+						{/if}
 					</div>
-
+		
 					<div class="flex justify-end pt-2">
-						<Button type="submit" disabled={updating}>
-							{updating ? 'Saving Settings...' : 'Save System Settings'}
+						<Button type="submit" disabled={saving} class="rounded-full px-8">
+							{saving ? 'Saving...' : 'Save Changes'}
 						</Button>
 					</div>
 				</form>
 			</Card.Content>
 		</Card.Root>
 
-		<!-- Section 2: Service Packages Manager -->
+		<!-- Service Packages Card -->
 		<Card.Root>
 			<Card.Header>
-				<Card.Title>My Packages</Card.Title>
-				<Card.Description>Manage the active packages available for bookings.</Card.Description>
+				<Card.Title>Service Packages</Card.Title>
+				<Card.Description>Packages available for client bookings.</Card.Description>
 			</Card.Header>
-			<Card.Content class="space-y-4">
-				<div class="divide-y divide-slate-100">
-					{#each packages as pkg}
-						<div class="flex items-center justify-between py-3">
-							<div class="flex items-center space-x-2">
-								<span class="text-lg">{pkg.emoji}</span>
-								<span class="font-medium text-slate-700">{pkg.name}</span>
+			<Card.Content class="space-y-6">
+				{#if packages.length > 0}
+					<div class="divide-y divide-border">
+						{#each packages as pkg}
+							<div class="flex items-center justify-between py-3.5 first:pt-0 last:pb-0">
+								<div class="flex items-center gap-3">
+									<span
+										class="flex h-8 w-8 items-center justify-center rounded-md bg-muted text-base"
+									>
+										{pkg.emoji}
+									</span>
+									<span class="text-sm font-medium">{pkg.name}</span>
+								</div>
+								<span class="text-sm font-semibold tabular-nums">
+									RM {Number(pkg.price).toLocaleString('en-MY', {
+										minimumFractionDigits: 2
+									})}
+								</span>
 							</div>
-							<span class="font-semibold text-slate-950">RM {pkg.price}</span>
-						</div>
-					{:else}
-						<p class="text-sm text-slate-400 py-4 text-center">
-							No service packages registered yet.
+						{/each}
+					</div>
+				{:else}
+					<div class="rounded-lg border border-dashed border-border py-10 text-center">
+						<p class="text-sm text-muted-foreground">
+							No packages yet. Add your first one below.
 						</p>
-					{/each}
-				</div>
+					</div>
+				{/if}
 
-				<div class="border-t border-slate-100 pt-4">
-					<h4 class="mb-3 text-sm font-bold text-slate-800">Add Custom Service Package</h4>
-					<form onsubmit={handleAddPackage} class="grid grid-cols-1 items-end gap-3 md:grid-cols-4">
-						<div class="space-y-1.5">
-							<label for="emoji" class="text-xs font-semibold text-slate-500">Icon Emoji</label>
-							<Input id="emoji" name="emoji" bind:value={pkgEmoji} required />
-						</div>
-						<div class="space-y-1.5 md:col-span-2">
-							<label for="name" class="text-xs font-semibold text-slate-500">Package Title</label>
-							<Input
-								id="name"
-								name="name"
-								placeholder="E.g., Nikah Glam"
-								bind:value={pkgName}
-								required
-							/>
-						</div>
-						<div class="space-y-1.5">
-							<label for="price" class="text-xs font-semibold text-slate-500">Base Price (RM)</label>
-							<Input
-								id="price"
-								name="price"
-								type="number"
-								step="0.01"
-								placeholder="800.00"
-								bind:value={pkgPrice}
-								required
-							/>
-						</div>
-						<div class="flex justify-end md:col-span-4">
-							<Button type="submit" variant="outline" disabled={addingPkg}>
-								{addingPkg ? 'Adding...' : 'Save New Package'}
+				<Separator />
+
+				<div class="space-y-4">
+					<h4 class="text-sm font-semibold">Add New Package</h4>
+					<form onsubmit={handleAddPackage} class="grid gap-4 sm:grid-cols-[5rem_1fr_8rem]">
+						<Field class="gap-2">
+							<FieldLabel htmlFor="pkg-emoji">Icon</FieldLabel>
+							<Input id="pkg-emoji" bind:value={pkgEmoji} required class="text-center rounded-full bg-muted border-none" />
+						</Field>
+						<Field class="gap-2">
+							<FieldLabel htmlFor="pkg-name">Package Name</FieldLabel>
+							<Input id="pkg-name" bind:value={pkgName} required placeholder="e.g., Nikah Full Glam" class="rounded-full bg-muted border-none px-4" />
+						</Field>
+						<Field class="gap-2">
+							<FieldLabel htmlFor="pkg-price">Price (RM)</FieldLabel>
+							<Input id="pkg-price" type="number" step="0.01" bind:value={pkgPrice} required placeholder="800.00" class="rounded-full bg-muted border-none px-4" />
+						</Field>
+						<div class="flex justify-end sm:col-span-3">
+							<Button type="submit" variant="outline" disabled={addingPackage} class="rounded-full">
+								{addingPackage ? 'Adding...' : 'Add Package'}
 							</Button>
 						</div>
 					</form>

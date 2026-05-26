@@ -4,14 +4,13 @@
 
 	let { children } = $props();
 
-	// Read scoped reactive elements from SvelteKit's central page store
 	let supabase = $derived(page.data.supabase);
 	let session = $derived(page.data.session);
+	let currentPath = $derived(page.url.pathname);
 
 	let loading = $state(true);
 	let authenticated = $state(false);
 
-	// Synchronize security layout gates reactively based on global session state
 	$effect(() => {
 		if (session) {
 			authenticated = true;
@@ -19,7 +18,7 @@
 		} else {
 			authenticated = false;
 			loading = false;
-			goto('/login?error=Please log in to access your dashboard');
+			goto('/login');
 		}
 	});
 
@@ -27,31 +26,57 @@
 		await supabase.auth.signOut();
 		goto('/login');
 	}
+
+	const navLinks = [
+		{ href: '/bookings', label: 'Bookings' },
+		{ href: '/settings', label: 'Settings' }
+	];
 </script>
 
 {#if loading}
-	<div class="flex min-h-screen items-center justify-center bg-slate-50">
-		<p class="animate-pulse text-sm font-semibold text-slate-500">Verifying workspace session...</p>
+	<div class="flex min-h-screen items-center justify-center">
+		<span class="text-sm text-muted-foreground">Loading...</span>
 	</div>
 {:else if authenticated}
-	<div class="flex min-h-screen flex-col bg-slate-50">
-		<nav class="border-b border-slate-200 bg-white px-4 py-3 sm:px-6">
-			<div class="mx-auto flex max-w-7xl items-center justify-between">
-				<a href="/bookings" class="text-lg font-bold tracking-tight text-slate-900"> MUASuites </a>
-				<div class="flex items-center space-x-6">
-					<a href="/bookings" class="text-sm font-medium text-slate-600 hover:text-slate-900">Bookings</a>
-					<a href="/settings" class="text-sm font-medium text-slate-600 hover:text-slate-900">Settings</a>
+	<div class="min-h-screen bg-background">
+		<header
+			class="sticky top-0 z-50 border-b border-border bg-card/80 backdrop-blur-sm"
+		>
+			<div class="mx-auto flex h-14 max-w-5xl items-center justify-between px-4 sm:px-6">
+				<a
+					href="/bookings"
+					class="text-base font-semibold tracking-tight text-foreground"
+				>
+					MUASuites
+				</a>
+
+				<nav class="flex items-center gap-1">
+					{#each navLinks as link}
+						{@const active = currentPath.startsWith(link.href)}
+						<a
+							href={link.href}
+							class="rounded-md px-3 py-1.5 text-sm font-medium transition-colors
+								{active
+									? 'bg-muted text-foreground'
+									: 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'}"
+						>
+							{link.label}
+						</a>
+					{/each}
+
+					<div class="mx-1.5 h-4 w-px bg-border"></div>
+
 					<button
 						onclick={handleLogout}
-						class="text-sm font-semibold text-red-600 transition hover:text-red-700"
+						class="rounded-md px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:text-destructive"
 					>
-						Logout
+						Log out
 					</button>
-				</div>
+				</nav>
 			</div>
-		</nav>
+		</header>
 
-		<main class="mx-auto w-full max-w-7xl flex-grow px-4 py-6 sm:px-6">
+		<main class="mx-auto max-w-5xl px-4 py-8 sm:px-6">
 			{@render children()}
 		</main>
 	</div>
