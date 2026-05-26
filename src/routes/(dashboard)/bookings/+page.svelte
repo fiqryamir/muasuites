@@ -1,16 +1,22 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { supabase } from '$lib/supabaseClient';
+	import { page } from '$app/state';
+	import { z } from 'zod';
+	import { toast } from 'svelte-sonner'; // Import Sonner
 	import * as Card from '$lib/components/ui/card';
 	import { Button } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
+
+	// Grab the request-scoped Supabase client and session reactively from SvelteKit
+	let supabase = $derived(page.data.supabase);
+	let session = $derived(page.data.session);
 
 	// State Management
 	let loading = $state(true);
 	let userId = $state('');
 	let muaSlug = $state('');
 	let muaPlan = $state('FREE');
-	let accessToken = $state(''); // Stores the MUA's session token for secure calendar URLs
+	let accessToken = $state(''); 
 
 	let bookings = $state<any[]>([]);
 
@@ -23,11 +29,18 @@
 	let depositModeOverride = $state<'FIXED' | 'PERCENT'>('FIXED');
 	let depositValueOverride = $state<number | null>(null);
 
-	// Generated Link Output
+	// Client-side validation schema for generating links
+	const inviteGeneratorSchema = z.object({
+		// eventDate: z.string().min(1, 'Please select an event date.'),
+		transportOverride: z.number().nonnegative('Transport fee override must be 0 or greater.'),
+		customSurcharge: z.number().nonnegative('Custom surcharge must be 0 or greater.'),
+		surchargeRemark: z.string().optional(),
+		depositValueOverride: z.number().positive('Deposit value override must be greater than 0.').nullable()
+	});
+
 	let generatedUrl = $state('');
 	let generating = $state(false);
 
-	// Ledger stats
 	let pendingCount = $derived(bookings.filter((b) => b.status === 'PENDING_APPROVAL').length);
 	let confirmedCount = $derived(
 		bookings.filter((b) => b.status === 'CONFIRMED' || b.status === 'FULLY_PAID').length
@@ -35,7 +48,6 @@
 
 	const todayStr = new Date().toISOString().split('T')[0];
 
-	// Free tier check
 	let activeBookingsCount = $derived(
 		bookings.filter(
 			(b) =>
@@ -45,15 +57,11 @@
 	);
 
 	onMount(async () => {
-		const {
-			data: { session }
-		} = await supabase.auth.getSession();
 		if (!session) return;
 
 		userId = session.user.id;
-		accessToken = session.access_token || ''; // Extract secure token for link rendering
+		accessToken = session.access_token || ''; 
 
-		// Fetch MUA Slug and subscription tier
 		const { data: mua } = await supabase
 			.from('muas')
 			.select('slug, subscription_plan')
@@ -70,15 +78,13 @@
 
 	async function loadDashboardData() {
 		loading = true;
-
-		// Fetch Bookings Ledger
 		const { data: bks } = await supabase
 			.from('bookings')
 			.select('*, packages(*)')
 			.eq('mua_id', userId)
 			.order('event_date', { ascending: true });
+		
 		bookings = bks || [];
-
 		loading = false;
 	}
 
@@ -87,15 +93,24 @@
 		generating = true;
 		generatedUrl = '';
 
-		if (!eventDate) {
-			alert('Please select an event date.');
+		// Validate using Zod client-side
+		const validation = inviteGeneratorSchema.safeParse({
+			// eventDate,
+			transportOverride,
+			customSurcharge,
+			surchargeRemark,
+			depositValueOverride
+		});
+
+		if (!validation.success) {
 			generating = false;
+			toast.warning(validation.error.issues[0].message);
 			return;
 		}
 
-		const token = crypto.randomUUID(); // Generate unique invite token
+		const token = crypto.randomUUID(); 
 		const expiresAt = new Date();
-		expiresAt.setHours(expiresAt.getHours() + 48);
+		expiresAt.setHours(expiresAt.getHours() + 48); 
 
 		const { data: invite, error } = await supabase
 			.from('invites')
@@ -103,12 +118,13 @@
 				mua_id: userId,
 				token,
 				package_id: null,
-				event_date: eventDate,
+				event_date: null,
 				transport_fee_override: transportOverride,
 				custom_surcharge: customSurcharge,
 				surcharge_remark: surchargeRemark,
 				deposit_mode_override: depositValueOverride !== null ? depositModeOverride : null,
 				deposit_value_override: depositValueOverride !== null ? depositValueOverride : null,
+				is_used: false,
 				expires_at: expiresAt.toISOString()
 			})
 			.select()
@@ -117,18 +133,18 @@
 		generating = false;
 
 		if (error) {
-			alert('Error generating invite link: ' + error.message);
+			toast.error('Error generating invite link: ' + error.message);
 		} else if (invite) {
 			generatedUrl = `${window.location.origin}/${muaSlug}/${token}`;
+			toast.success('Personalized invite link successfully generated!');
 		}
 	}
 
 	function copyToClipboard() {
 		navigator.clipboard.writeText(generatedUrl);
-		alert('Booking link copied to clipboard!');
+		toast.success('Booking link copied to clipboard!');
 	}
 
-	// Handle approvals on the server (no popup triggered here anymore)
 	async function handleApprovePayment(booking: any) {
 		if (
 			!confirm(
@@ -143,16 +159,13 @@
 			.eq('id', booking.id);
 
 		if (error) {
-			alert('Failed to approve booking: ' + error.message);
+			toast.error('Failed to approve booking: ' + error.message);
 		} else {
-			alert(
-				'Booking successfully confirmed! You can now tap the Download .ics button next to their booking card.'
-			);
+			toast.success('Booking successfully confirmed!');
 			await loadDashboardData();
 		}
 	}
 
-	// Segmented Ledger Lists
 	let pendingBookings = $derived(bookings.filter((b) => b.status === 'PENDING_APPROVAL'));
 	let upcomingBookings = $derived(
 		bookings.filter(
@@ -261,12 +274,12 @@
 					{:else}
 						<form onsubmit={handleGenerateLink} class="space-y-4">
 							<div class="grid grid-cols-1 gap-4 md:grid-cols-2">
-								<div class="space-y-1.5 md:col-span-2">
+								<!-- <div class="space-y-1.5 md:col-span-2">
 									<label for="date" class="text-xs font-semibold text-slate-500 uppercase"
 										>Event Date</label
 									>
 									<Input id="date" type="date" bind:value={eventDate} required />
-								</div>
+								</div> -->
 
 								<div class="space-y-1.5">
 									<label
@@ -398,7 +411,7 @@
 				</div>
 			</div>
 
-			<!-- Section B: Upcoming Calendar Schedule (Now with Static .ics Download Link) -->
+			<!-- Section B: Upcoming Calendar Schedule -->
 			<div>
 				<h3 class="mb-2 text-sm font-bold tracking-wider text-slate-800 uppercase">
 					Upcoming Schedule ({upcomingBookings.length})
@@ -427,7 +440,6 @@
 											Balance: RM {booking.balance_amount}
 										</p>
 									</div>
-									<!-- Secure static download link (Never blocked by mobile pop-up blockers) -->
 									<a
 										href={`/api/calendar/${booking.id}?token=${accessToken}`}
 										target="_blank"
@@ -446,7 +458,7 @@
 				</div>
 			</div>
 
-			<!-- Section C: Past History (Now with Static .ics Download Link) -->
+			<!-- Section C: Past History -->
 			<div>
 				<h3 class="mb-2 text-sm font-bold tracking-wider text-slate-400 uppercase">
 					Completed & Past History ({pastBookings.length})
@@ -465,8 +477,7 @@
 									</p>
 								</div>
 								<div class="flex items-center gap-4">
-									<span class="text-xs font-semibold text-slate-700">RM {booking.total_amount}</span
-									>
+									<span class="text-xs font-semibold text-slate-700">RM {booking.total_amount}</span>
 									<a
 										href={`/api/calendar/${booking.id}?token=${accessToken}`}
 										target="_blank"

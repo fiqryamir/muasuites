@@ -1,11 +1,23 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { supabase } from '$lib/supabaseClient';
+	import { page } from '$app/state';
+	import { z } from 'zod';
+	import { toast } from 'svelte-sonner'; // Import Sonner
 	import * as Card from '$lib/components/ui/card';
 	import { Button } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
+	import {
+		InputGroup,
+		InputGroupAddon,
+		InputGroupInput,
+		InputGroupText,
+		} from "$lib/components/ui/input-group"
 
-	// Svelte 5 State Variables
+	// SvelteKit request-scoped reactive references
+	let supabase = $derived(page.data.supabase);
+	let session = $derived(page.data.session);
+
+	// UI State Variables
 	let loading = $state(true);
 	let updating = $state(false);
 	let addingPkg = $state(false);
@@ -15,7 +27,7 @@
 	let config = $state<any>(null);
 	let packages = $state<any[]>([]);
 
-	// Input bindings
+	// Config Input bindings
 	let slug = $state('');
 	let studioName = $state('');
 	let whatsappNumber = $state('');
@@ -23,6 +35,24 @@
 	let depositMode = $state<'FIXED' | 'PERCENT'>('FIXED');
 	let depositValue = $state(0);
 	let duitnowQrUrl = $state('');
+
+	// Zod Verification schemas
+	const configSchema = z.object({
+		slug: z.string()
+			.min(3, 'Slug handle must be at least 3 characters.')
+			.max(20, 'Slug handle must be 20 characters or less.')
+			.regex(/^[a-z0-9_]+$/, 'Slug must contain only lowercase letters, numbers, or underscores.'),
+		studioName: z.string().min(2, 'Studio name must be at least 2 characters.'),
+		whatsappNumber: z.string().regex(/^(601)[0-9]{8,10}$/, 'WhatsApp must be a valid Malaysian format (e.g., 60123456789).'),
+		depositValue: z.number().nonnegative('Default deposit value cannot be negative.'),
+		telegramChatId: z.string().optional()
+	});
+
+	const packageSchema = z.object({
+		pkgEmoji: z.string().emoji('Please enter a single valid emoji icon.'),
+		pkgName: z.string().min(3, 'Package title must be at least 3 characters.'),
+		pkgPrice: z.number().positive('Package price must be greater than RM 0.')
+	});
 
 	// File Upload State
 	let qrFile = $state<File | null>(null);
@@ -32,20 +62,10 @@
 	let pkgName = $state('');
 	let pkgPrice = $state(0);
 
-	// UI feedback states
-	let feedbackMessage = $state('');
-	let feedbackError = $state('');
-
 	let testingTelegram = $state(false);
-	let telegramTestMessage = $state('');
-	let telegramTestError = $state('');
 
 	onMount(async () => {
-		const {
-			data: { session }
-		} = await supabase.auth.getSession();
 		if (!session) return;
-
 		userId = session.user.id;
 		await loadSettings();
 	});
@@ -53,7 +73,7 @@
 	async function loadSettings() {
 		loading = true;
 
-		// 1. Fetch profile slug
+		// 1. Fetch profile slug and details
 		const { data: prof } = await supabase
 			.from('muas')
 			.select('slug, subscription_plan')
@@ -80,6 +100,13 @@
 			depositMode = conf.deposit_mode || 'FIXED';
 			depositValue = parseFloat(conf.deposit_value || '0');
 			duitnowQrUrl = conf.duitnow_qr_url || '';
+
+			const rawPhone = conf.whatsapp_number || '';
+			if (rawPhone.startsWith('60')) {
+				whatsappNumber = rawPhone.substring(2);
+			} else {
+				whatsappNumber = rawPhone;
+			}
 		}
 
 		// 3. Fetch Packages
@@ -94,7 +121,6 @@
 		loading = false;
 	}
 
-	// Handle local file selection
 	function handleFileChange(e: Event) {
 		const target = e.target as HTMLInputElement;
 		if (target.files && target.files.length > 0) {
@@ -105,62 +131,82 @@
 	async function handleUpdateConfig(e: Event) {
 		e.preventDefault();
 		updating = true;
-		feedbackError = '';
-		feedbackMessage = '';
 
-		// Slug validation
-		if (!/^[a-z0-9_]{3,20}$/.test(slug)) {
-			feedbackError =
-				'Slug must be 3-20 characters long and contain only lowercase letters, numbers, or underscores.';
+		const fullWhatsappNumber = `60${whatsappNumber}`;
+
+		// Client-side Zod validation
+		const validation = configSchema.safeParse({
+			slug,
+			studioName,
+			whatsappNumber: fullWhatsappNumber,
+			depositValue,
+			telegramChatId
+		});
+
+		if (!validation.success) {
 			updating = false;
+			toast.warning(validation.error.issues[0].message);
 			return;
 		}
 
 		let finalQrUrl = duitnowQrUrl;
 
-		// 1. Upload QR image if a new file is chosen
+		// Upload QR image if a file has been selected
 		if (qrFile) {
-			const fileExt = qrFile.name.split('.').pop();
-			const filePath = `${userId}/duitnow_qr.${fileExt}`;
-
-			// Upload/Overwrite existing QR file in public bucket
-			const { error: uploadError } = await supabase.storage
-				.from('qr-codes')
-				.upload(filePath, qrFile, { upsert: true });
-
-			if (uploadError) {
-				feedbackError = 'Error uploading QR code file: ' + uploadError.message;
+			const allowedMimeTypes = ['image/jpeg', 'image/png', 'image/webp'];
+			if (!allowedMimeTypes.includes(qrFile.type)) {
 				updating = false;
+				toast.error('Invalid image type. Please select a PNG, JPG, or WebP file.');
 				return;
 			}
 
-			// Retrieve the public URL
-			const {
-				data: { publicUrl }
-			} = supabase.storage.from('qr-codes').getPublicUrl(filePath);
+			const mimeToExt: Record<string, string> = {
+				'image/jpeg': 'jpg',
+				'image/png': 'png',
+				'image/webp': 'webp'
+			};
+			const fileExt = mimeToExt[qrFile.type] || 'jpg';
+			const filePath = `${userId}/duitnow_qr.${fileExt}`;
 
+			const { error: uploadError } = await supabase.storage
+				.from('qr-codes')
+				.upload(filePath, qrFile, { 
+					upsert: true,
+					contentType: qrFile.type 
+				});
+
+			if (uploadError) {
+				updating = false;
+				toast.error('Error uploading QR code file: ' + uploadError.message);
+				return;
+			}
+
+			const { data: { publicUrl } } = supabase.storage.from('qr-codes').getPublicUrl(filePath);
 			finalQrUrl = publicUrl;
 		}
 
-		// 2. Update public.muas (slug)
-		const { error: profileError } = await supabase.from('muas').update({ slug }).eq('id', userId);
+		// Update public.muas (slug custom booking handle)
+		const { error: profileError } = await supabase
+			.from('muas')
+			.update({ slug })
+			.eq('id', userId);
 
 		if (profileError) {
-			if (profileError.code === '23505') {
-				feedbackError = 'This custom link handle is already taken by another MUA.';
-			} else {
-				feedbackError = profileError.message;
-			}
 			updating = false;
+			if (profileError.code === '23505') {
+				toast.error('This custom link handle is already taken by another MUA.');
+			} else {
+				toast.error(profileError.message);
+			}
 			return;
 		}
 
-		// 3. Update public.mua_configs
+		// Update public.mua_configs variables
 		const { error: configError } = await supabase
 			.from('mua_configs')
 			.update({
 				studio_name: studioName,
-				whatsapp_number: whatsappNumber,
+				whatsapp_number: fullWhatsappNumber,
 				telegram_chat_id: telegramChatId,
 				deposit_mode: depositMode,
 				deposit_value: depositValue,
@@ -171,10 +217,10 @@
 		updating = false;
 
 		if (configError) {
-			feedbackError = configError.message;
+			toast.error(configError.message);
 		} else {
-			feedbackMessage = 'Settings successfully updated!';
-			qrFile = null; // reset file input state
+			toast.success('System settings successfully updated!');
+			qrFile = null; 
 			await loadSettings();
 		}
 	}
@@ -182,11 +228,17 @@
 	async function handleAddPackage(e: Event) {
 		e.preventDefault();
 		addingPkg = true;
-		feedbackError = '';
 
-		if (!pkgName || pkgPrice <= 0) {
-			feedbackError = 'Please enter a valid package title and price.';
+		// Client-side Zod validation
+		const validation = packageSchema.safeParse({
+			pkgEmoji,
+			pkgName,
+			pkgPrice
+		});
+
+		if (!validation.success) {
 			addingPkg = false;
+			toast.warning(validation.error.issues[0].message);
 			return;
 		}
 
@@ -200,24 +252,23 @@
 		addingPkg = false;
 
 		if (error) {
-			feedbackError = error.message;
+			toast.error(error.message);
 		} else {
 			pkgName = '';
 			pkgPrice = 0;
 			pkgEmoji = '💄';
+			toast.success('Service package added successfully!');
 			await loadSettings();
 		}
 	}
 
 	async function testTelegramConnection() {
 		if (!telegramChatId) {
-			telegramTestError = 'Please enter a Telegram Chat ID first.';
+			toast.warning('Please enter a Telegram Chat ID first.');
 			return;
 		}
 
 		testingTelegram = true;
-		telegramTestError = '';
-		telegramTestMessage = '';
 
 		try {
 			const response = await fetch('/api/test-telegram', {
@@ -229,12 +280,12 @@
 			const result = await response.json();
 
 			if (result.success) {
-				telegramTestMessage = 'Test notification sent! Check your Telegram app.';
+				toast.success('Test notification sent! Check your Telegram app.');
 			} else {
-				telegramTestError = result.error;
+				toast.error(result.error || 'Failed to send Telegram connection test.');
 			}
 		} catch (err: any) {
-			telegramTestError = err.message;
+			toast.error(err.message);
 		} finally {
 			testingTelegram = false;
 		}
@@ -247,25 +298,11 @@
 	</div>
 {:else}
 	<div class="mx-auto max-w-3xl space-y-6">
-		<!-- Feedback alerts -->
-		{#if feedbackError}
-			<div class="rounded-md border border-red-200 bg-red-50 p-4">
-				<p class="text-sm font-medium text-red-800">{feedbackError}</p>
-			</div>
-		{/if}
-
-		{#if feedbackMessage}
-			<div class="rounded-md border border-emerald-200 bg-emerald-50 p-4">
-				<p class="text-sm font-medium text-emerald-800">{feedbackMessage}</p>
-			</div>
-		{/if}
-
 		<!-- Section 1: Business Identity & Profile Config -->
 		<Card.Root>
 			<Card.Header>
 				<Card.Title>Studio Identity & Configurations</Card.Title>
-				<Card.Description>Configure your personal booking handle and contact info.</Card.Description
-				>
+				<Card.Description>Configure your personal booking handle and contact info.</Card.Description>
 			</Card.Header>
 			<Card.Content>
 				<form onsubmit={handleUpdateConfig} class="space-y-4">
@@ -274,14 +311,13 @@
 							<label for="slug" class="text-xs font-semibold text-slate-500 uppercase"
 								>Custom Booking Handle</label
 							>
-							<div class="flex items-center">
-								<span
-									class="inline-flex items-center rounded-l-md border border-r-0 border-slate-300 bg-slate-50 px-3 text-sm text-slate-500"
-									>/</span
-								>
-								<Input id="slug" name="slug" bind:value={slug} required class="rounded-l-none" />
-							</div>
-							<p class="text-[10px] text-slate-400">Url path: muasuite.com/slug/invite_token</p>
+							<InputGroup>
+								<InputGroupAddon>
+								  <InputGroupText>/</InputGroupText>
+								</InputGroupAddon>
+								<InputGroupInput id="slug" name="slug" bind:value={slug} required class="rounded-l-none" />
+							  </InputGroup>
+							<p class="text-[10px] text-slate-400">muasuite.com/{slug}</p>
 						</div>
 
 						<div class="space-y-1.5">
@@ -295,13 +331,18 @@
 							<label for="whatsapp_number" class="text-xs font-semibold text-slate-500 uppercase"
 								>WhatsApp Contact Number</label
 							>
-							<Input
-								id="whatsapp_number"
+							<InputGroup>
+								<InputGroupAddon>
+								  <InputGroupText>+60</InputGroupText>
+								</InputGroupAddon>
+								<InputGroupInput id="whatsapp_number"
 								name="whatsapp_number"
-								placeholder="60123456789"
+								placeholder="123456789"
 								bind:value={whatsappNumber}
-								required
-							/>
+								class="rounded-l-none"
+								required />
+							  </InputGroup>
+							<p class="text-[9px] text-slate-400 mt-1">Enter digits without leading "0" or spaces (e.g., 123456789).</p>
 						</div>
 
 						<div class="space-y-1.5 md:col-span-1">
@@ -326,15 +367,7 @@
 								</Button>
 							</div>
 
-							<!-- Live verification alerts -->
-							{#if telegramTestError}
-								<p class="mt-1 text-[10px] font-semibold text-red-600">{telegramTestError}</p>
-							{/if}
-							{#if telegramTestMessage}
-								<p class="mt-1 text-[10px] font-semibold text-emerald-600">{telegramTestMessage}</p>
-							{/if}
-
-							<p class="text-[9px] text-slate-400">
+							<p class="text-[9px] text-slate-400 mt-1">
 								Get your ID by sending a message to <strong>@userinfobot</strong> on Telegram. Make sure
 								you click "Start" on your custom bot first!
 							</p>
@@ -369,7 +402,7 @@
 							/>
 						</div>
 
-						<!-- NEW: DuitNow QR Upload Input & Live Preview -->
+						<!-- QR Upload Area -->
 						<div class="space-y-1.5 border-t border-slate-100 pt-4 md:col-span-2">
 							<label for="qr_code" class="text-xs font-bold text-slate-700 uppercase"
 								>Setup DuitNow QR Code Screenshot</label
@@ -449,8 +482,7 @@
 							/>
 						</div>
 						<div class="space-y-1.5">
-							<label for="price" class="text-xs font-semibold text-slate-500">Base Price (RM)</label
-							>
+							<label for="price" class="text-xs font-semibold text-slate-500">Base Price (RM)</label>
 							<Input
 								id="price"
 								name="price"

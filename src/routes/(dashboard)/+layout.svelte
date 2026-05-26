@@ -1,36 +1,26 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { supabase } from '$lib/supabaseClient';
+	import { page } from '$app/state';
 
 	let { children } = $props();
-	let authenticated = $state(false);
+
+	// Read scoped reactive elements from SvelteKit's central page store
+	let supabase = $derived(page.data.supabase);
+	let session = $derived(page.data.session);
+
 	let loading = $state(true);
+	let authenticated = $state(false);
 
-	onMount(async () => {
-		// 1. First, check if there is an immediate session
-		const {
-			data: { session }
-		} = await supabase.auth.getSession();
-
+	// Synchronize security layout gates reactively based on global session state
+	$effect(() => {
 		if (session) {
 			authenticated = true;
 			loading = false;
-			return;
+		} else {
+			authenticated = false;
+			loading = false;
+			goto('/login?error=Please log in to access your dashboard');
 		}
-
-		// 2. If session is null, wait a brief moment for Supabase to finish parsing storage
-		// This resolves the storage race condition on cold page refreshes
-		const unsubscribe = supabase.auth.onAuthStateChange(async (event, currentSession) => {
-			if (currentSession) {
-				authenticated = true;
-				loading = false;
-				unsubscribe.data.subscription.unsubscribe();
-			} else {
-				// Only redirect if absolutely no session is found after initialization
-				goto('/login?error=Please log in to access your dashboard');
-			}
-		});
 	});
 
 	async function handleLogout() {
@@ -49,12 +39,8 @@
 			<div class="mx-auto flex max-w-7xl items-center justify-between">
 				<a href="/bookings" class="text-lg font-bold tracking-tight text-slate-900"> MUASuites </a>
 				<div class="flex items-center space-x-6">
-					<a href="/bookings" class="text-sm font-medium text-slate-600 hover:text-slate-900"
-						>Bookings</a
-					>
-					<a href="/settings" class="text-sm font-medium text-slate-600 hover:text-slate-900"
-						>Settings</a
-					>
+					<a href="/bookings" class="text-sm font-medium text-slate-600 hover:text-slate-900">Bookings</a>
+					<a href="/settings" class="text-sm font-medium text-slate-600 hover:text-slate-900">Settings</a>
 					<button
 						onclick={handleLogout}
 						class="text-sm font-semibold text-red-600 transition hover:text-red-700"

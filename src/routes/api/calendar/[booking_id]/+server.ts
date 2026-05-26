@@ -2,27 +2,41 @@ import { error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { createClient } from '@supabase/supabase-js';
 import { PUBLIC_SUPABASE_URL, PUBLIC_SUPABASE_ANON_KEY } from '$env/static/public';
-import { supabase } from '$lib/supabaseClient';
+
+// Helper function to escape text in compliance with RFC 5545 iCalendar standard
+function escapeIcsText(str: string): string {
+	return (str || '')
+		.replace(/\\/g, '\\\\')
+		.replace(/;/g, '\\;')
+		.replace(/,/g, '\\,')
+		.replace(/\n/g, '\\n')
+		.replace(/\r/g, '');
+}
 
 export const GET: RequestHandler = async ({ params, url }) => {
 	const { booking_id } = params;
 
-	// Extract the MUA's JWT token from the secure query parameters
+	// Extract the MUA's session token from the secure query parameters
 	const token = url.searchParams.get('token') || '';
 
-	// Initialize an authenticated Supabase client on the server using the MUA's token.
-	// This securely enforces RLS policies in the database!
+	if (!token) {
+		throw error(401, 'Unauthorized access request.');
+	}
+
+	// Initialize an authenticated client scoped to the MUA's token
+	// This forces RLS engine verification directly in the Postgres database
 	const authenticatedSupabase = createClient(PUBLIC_SUPABASE_URL, PUBLIC_SUPABASE_ANON_KEY, {
 		global: {
 			headers: {
 				Authorization: `Bearer ${token}`
 			}
+		},
+		auth: {
+			persistSession: false
 		}
 	});
 
-	// 1. Fetch booking and package details using the authenticated client
-	// const { data: booking, error: dbError } = await supabase; // Using standard client to bypass RLS for public info?
-	// No, we use authenticatedSupabase to securely enforce the MUA's access rights!
+	// Fetch booking details utilizing RLS credentials
 	const { data: bookingAuth, error: authDbError } = await authenticatedSupabase
 		.from('bookings')
 		.select('*, packages(*)')
@@ -34,28 +48,39 @@ export const GET: RequestHandler = async ({ params, url }) => {
 		throw error(404, 'Booking event not found or unauthorized access.');
 	}
 
-	// 2. Format iCalendar (.ics) String
-	const eventDateClean = bookingAuth.event_date.replace(/-/g, ''); // e.g., 20260525
-	const eventTimeClean = bookingAuth.event_time.replace(/:/g, ''); // e.g., 080000
+	// Format iCalendar dates safely (e.g., eventDateClean yields "20260525")
+	const eventDateClean = bookingAuth.event_date.replace(/-/g, '');
+
+	// Normalize time formatting (forces HHMMSS, handling both "08:00" and "08:00:00")
+	const rawTime = bookingAuth.event_time;
+	const parts = rawTime.split(':');
+	const hh = parts[0].padStart(2, '0');
+	const mm = (parts[1] || '00').padStart(2, '0');
+	const ss = (parts[2] || '00').padStart(2, '0');
+	const eventTimeClean = `${hh}${mm}${ss}`;
 
 	const startTimestamp = `${eventDateClean}T${eventTimeClean}`;
-	const endHour = (parseInt(bookingAuth.event_time.split(':')[0]) + 3).toString().padStart(2, '0');
-	const endTimestamp = `${eventDateClean}T${endHour}${eventTimeClean.substring(2)}`;
 
-	const summary = `Makeup Session: ${bookingAuth.client_name}`;
-	const location = bookingAuth.venue_address || 'Studio / Venue TBD';
+	// Calculate a safe default 3-hour duration for the calendar event block
+	const endHour = (parseInt(hh, 10) + 3).toString().padStart(2, '0');
+	const endTimestamp = `${eventDateClean}T${endHour}${mm}${ss}`;
 
-	const description = `
+	// Escape custom field strings to lock down CRLF injection vectors
+	const summary = escapeIcsText(`Makeup Session: ${bookingAuth.client_name}`);
+	const location = escapeIcsText(bookingAuth.venue_address || 'Studio / Venue TBD');
+
+	const rawDescription = `
 Bride Name: ${bookingAuth.client_name}
 WhatsApp Contact: wa.me/${bookingAuth.client_phone}
-Package: ${bookingAuth.packages?.emoji || '💄'} ${bookingAuth.packages?.name || 'Service'}
+Service: ${bookingAuth.packages?.emoji || '💄'} ${bookingAuth.packages?.name || 'Service'}
 Total Price: RM ${bookingAuth.total_amount}
 Paid Deposit: RM ${bookingAuth.deposit_amount}
 Balance Due Post-Event: RM ${bookingAuth.balance_amount}
-  `
-		.trim()
-		.replace(/\n/g, '\\n'); // Escape new lines for .ics standard
+	`.trim();
 
+	const description = escapeIcsText(rawDescription);
+
+	// Assemble RFC 5545 iCalendar payload
 	const icsContent = [
 		'BEGIN:VCALENDAR',
 		'VERSION:2.0',
@@ -72,7 +97,7 @@ Balance Due Post-Event: RM ${bookingAuth.balance_amount}
 		'END:VCALENDAR'
 	].join('\r\n');
 
-	// 3. Serve the payload with official text/calendar Headers
+	// Return correct text/calendar content header and handle attachment triggers
 	return new Response(icsContent, {
 		headers: {
 			'Content-Type': 'text/calendar; charset=utf-8',

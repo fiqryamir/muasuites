@@ -1,9 +1,9 @@
 import { error } from '@sveltejs/kit';
 import type { PageServerLoad } from './$types';
-import { supabase } from '$lib/supabaseClient';
 
-export const load: PageServerLoad = async ({ params }) => {
+export const load: PageServerLoad = async ({ params, locals }) => {
 	const { mua_slug } = params;
+	const { supabase } = locals; // Extract the safe, request-scoped client
 
 	// 1. Fetch MUA Profile
 	const { data: mua, error: muaError } = await supabase
@@ -38,25 +38,22 @@ export const load: PageServerLoad = async ({ params }) => {
 		.select('blackout_date')
 		.eq('mua_id', muaId);
 
-	// 4. Fetch Occupied Dates (Confirmed, Pending, or unexpired Checking out locks)
+	// 4. Fetch only currently occupied dates
+	// Optimized: filters out old CHECKING_OUT holds directly in the SQL engine
+	const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+	const todayString = new Date().toISOString().split('T')[0];
+
 	const { data: bookings } = await supabase
 		.from('bookings')
 		.select('event_date, status, locked_at')
 		.eq('mua_id', muaId)
-		.gte('event_date', new Date().toISOString().split('T')[0]);
+		.gte('event_date', todayString)
+		.or(`status.in.("CONFIRMED","PENDING_APPROVAL"),and(status.eq.CHECKING_OUT,locked_at.gt.${tenMinutesAgo})`);
 
-	const occupiedDates =
-		bookings
-			?.filter(
-				(b) =>
-					['CONFIRMED', 'PENDING_APPROVAL'].includes(b.status) ||
-					(b.status === 'CHECKING_OUT' &&
-						new Date(b.locked_at).getTime() > Date.now() - 10 * 60 * 1000)
-			)
-			.map((b) => b.event_date) || [];
+	const occupiedDates = bookings?.map((b: any) => b.event_date) || [];
 
 	const disabledDates = new Set([
-		...(blackouts?.map((b) => b.blackout_date) || []),
+		...(blackouts?.map((b: any) => b.blackout_date) || []),
 		...occupiedDates
 	]);
 

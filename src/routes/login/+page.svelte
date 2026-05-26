@@ -1,35 +1,35 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { supabase } from '$lib/supabaseClient';
+	import { page } from '$app/state';
 	import * as Card from '$lib/components/ui/card';
 	import { Button } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
+
+	// Pull the scoped client and active session from SvelteKit's page data store
+	let supabase = $derived(page.data.supabase);
+	let session = $derived(page.data.session);
 
 	let email = $state('');
 	let loading = $state(false);
 	let errorMessage = $state('');
 	let successMessage = $state('');
 
-	onMount(async () => {
-		// 1. Listen for auth state changes.
-		// If Supabase parses a hash token (#access_token) from the URL,
-		// it triggers SIGNED_IN, and we redirect to the dashboard.
+	onMount(() => {
+		// 1. Immediately forward if a session is already resolved
+		if (session) {
+			goto('/bookings');
+			return;
+		}
+
+		// 2. Listen for auth state transitions (e.g., when clicking the Magic Link)
 		const {
 			data: { subscription }
-		} = supabase.auth.onAuthStateChange((event, session) => {
-			if (session) {
+		} = supabase.auth.onAuthStateChange((event, currentSession) => {
+			if (currentSession) {
 				goto('/bookings');
 			}
 		});
-
-		// 2. Double-check if a session already exists on page mount
-		const {
-			data: { session }
-		} = await supabase.auth.getSession();
-		if (session) {
-			goto('/bookings');
-		}
 
 		return () => {
 			subscription.unsubscribe();
@@ -48,8 +48,7 @@
 			return;
 		}
 
-		// Request the OTP magic link.
-		// We redirect directly to the /login page, where onMount will parse the token.
+		// Trigger passwordless Email Magic Link
 		const { error } = await supabase.auth.signInWithOtp({
 			email,
 			options: {

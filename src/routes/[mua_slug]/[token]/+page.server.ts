@@ -1,10 +1,10 @@
 import { error, fail } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
-import { supabase } from '$lib/supabaseClient';
-import { sendTelegramAlert } from '$lib/telegram.server';
+import { secureSlotSchema } from '$lib/schemas';
 
-export const load: PageServerLoad = async ({ params }) => {
+export const load: PageServerLoad = async ({ params, locals }) => {
 	const { mua_slug, token } = params;
+	const { supabase } = locals; // Grab our request-scoped client
 
 	// 1. Fetch Invite Record
 	const { data: invite, error: inviteError } = await supabase
@@ -44,30 +44,32 @@ export const load: PageServerLoad = async ({ params }) => {
 		.select('blackout_date')
 		.eq('mua_id', muaId);
 
-	// 5. Fetch Occupied Dates (Confirmed, Pending, or unexpired Checking out locks)
+	// 5. Query ONLY active, unexpired, or pending bookings (optimizes query size)
+	const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+
 	const { data: bookings } = await supabase
 		.from('bookings')
-		.select('event_date, status, locked_at')
+		.select('event_date, status, locked_at, invite_id') // Added invite_id
 		.eq('mua_id', muaId)
-		.gte('event_date', new Date().toISOString().split('T')[0]);
+		.gte('event_date', new Date().toISOString().split('T')[0])
+		.or(`status.in.("CONFIRMED","PENDING_APPROVAL"),and(status.eq.CHECKING_OUT,locked_at.gt.${tenMinutesAgo})`);
 
-	const occupiedDates =
-		bookings
-			?.filter(
-				(b) =>
-					['CONFIRMED', 'PENDING_APPROVAL'].includes(b.status) ||
-					(b.status === 'CHECKING_OUT' &&
-						new Date(b.locked_at).getTime() > Date.now() - 10 * 60 * 1000)
-			)
-			.map((b) => b.event_date) || [];
+	const capacityBlockers = bookings?.filter((b: any) => {
+		if (b.status === 'CHECKING_OUT' && b.invite_id === invite.id) {
+			return false; // Self-exclusion: this is the client's current active checkout session
+		}
+		return true;
+	}) || [];
+
+	const occupiedDates = bookings?.map((b: any) => b.event_date) || [];
 
 	const disabledDates = new Set([
-		...(blackouts?.map((b) => b.blackout_date) || []),
+		...(blackouts?.map((b: any) => b.blackout_date) || []),
 		...occupiedDates
 	]);
 
 	// 6. Dynamic Free-Tier Capacity Check
-	if (mua.subscription_plan === 'FREE' && occupiedDates.length >= 2) {
+	if (mua.subscription_plan === 'FREE' && capacityBlockers.length >= 2) {
 		return { gateState: 'CAPACITY_PAUSED' };
 	}
 
@@ -98,50 +100,59 @@ export const load: PageServerLoad = async ({ params }) => {
 };
 
 export const actions: Actions = {
-	// Action A: Secures the lock with the bride's selected package & date
-	secureSlot: async ({ request }) => {
+	secureSlot: async ({ request, locals }) => {
+		const { supabase } = locals;
 		const formData = await request.formData();
-		const muaId = formData.get('mua_id')?.toString();
-		const inviteId = formData.get('invite_id')?.toString();
-		const packageId = parseInt(formData.get('package_id')?.toString() || '');
-		const eventDate = formData.get('event_date')?.toString() || '';
-		const eventTime = formData.get('event_time')?.toString() || '08:00';
-		const clientName = formData.get('client_name')?.toString().trim() || '';
-		const clientPhone = formData.get('client_phone')?.toString().trim() || '';
-		const venueAddress = formData.get('venue_address')?.toString().trim() || '';
-		const totalAmount = parseFloat(formData.get('total_amount')?.toString() || '0');
-		const depositAmount = parseFloat(formData.get('deposit_amount')?.toString() || '0');
-		const balanceAmount = parseFloat(formData.get('balance_amount')?.toString() || '0');
 
-		// Run the concurrency safety check and lock database slot
-		const { data: rpcResult, error: rpcError } = await supabase.rpc('secure_checkout_slot', {
-			p_mua_id: muaId,
-			p_invite_id: inviteId,
-			p_package_id: packageId,
-			p_event_date: eventDate,
-			p_event_time: eventTime + ':00',
-			p_client_name: clientName,
-			p_client_phone: clientPhone,
-			p_venue_address: venueAddress,
-			p_total_amount: totalAmount,
-			p_deposit_amount: depositAmount,
-			p_balance_amount: balanceAmount
-		});
+		// Convert FormData entries directly into a structured object
+		const payload = Object.fromEntries(formData.entries());
 
-		if (rpcError || !rpcResult.success) {
-			console.error(rpcError);
-			return fail(400, {
-				error:
-					rpcResult?.error ||
-					'This date has just been locked by another client. Please select another date.'
-			});
+		// Parse payload against Zod Schema
+		const validation = secureSlotSchema.safeParse(payload);
+
+		if (!validation.success) {
+			// Extract field errors and return them to the UI
+			const fieldErrors = validation.error.flatten().fieldErrors;
+			return fail(400, { validationErrors: fieldErrors });
 		}
 
-		// Fetch payment transfer details once lock is securely held
+		const data = validation.data;
+
+		// Run Database Transaction with safe, validated variables
+		const { data: rpcResult, error: rpcError } = await supabase.rpc('secure_checkout_slot', {
+			p_mua_id: data.mua_id,
+			p_invite_id: data.invite_id || null,
+			p_package_id: data.package_id,
+			p_event_date: data.event_date,
+			p_event_time: data.event_time,
+			p_client_name: data.client_name,
+			p_client_phone: data.client_phone,
+			p_venue_address: data.venue_address,
+			p_total_amount: data.total_amount,
+			p_deposit_amount: data.deposit_amount,
+			p_balance_amount: data.balance_amount
+		});
+
+		if (rpcError) {
+			console.error('secure_checkout_slot Database Exception:', rpcError);
+			return fail(500, { error: 'A system database exception occurred. Please try again.' });
+		}
+
+		if (!rpcResult?.success) {
+			const errorMapping: Record<string, string> = {
+				'INVITE_NOT_FOUND': 'Your invitation details could not be found.',
+				'INVITE_ALREADY_USED': 'This invitation link has already been used.',
+				'INVITE_EXPIRED': 'This invitation link has expired.',
+				'MUA_CAPACITY_EXCEEDED': 'The MUA has temporarily reached their booking capacity limit.',
+				'DATE_ALREADY_TAKEN': 'This date has just been locked by another client.'
+			};
+			return fail(400, { error: errorMapping[rpcResult?.error] || 'This slot is unavailable.' });
+		}
+
 		const { data: bankConfig } = await supabase
 			.from('mua_configs')
-			.select('studio_name, whatsapp_number, telegram_chat_id, duitnow_qr_url')
-			.eq('mua_id', muaId)
+			.select('studio_name, whatsapp_number, duitnow_qr_url')
+			.eq('mua_id', data.mua_id)
 			.single();
 
 		return {
@@ -151,35 +162,48 @@ export const actions: Actions = {
 		};
 	},
 
-	// Action B: Finalizes receipt submission
-	submitReceipt: async ({ request }) => {
+	submitReceipt: async ({ request, locals }) => {
+		const { supabase } = locals;
 		const formData = await request.formData();
 		const bookingId = formData.get('booking_id')?.toString();
 		const inviteId = formData.get('invite_id')?.toString();
 		const receiptFile = formData.get('receipt') as File;
 
+		// 1. Strict Validation
 		if (!receiptFile || receiptFile.size === 0) {
 			return fail(400, { error: 'Please attach a payment receipt/screenshot.' });
 		}
 
-		// 1. Upload screenshot to bucket
-		const fileExt = receiptFile.name.split('.').pop();
+		const allowedMimeTypes = ['image/jpeg', 'image/png', 'image/webp'];
+		if (!allowedMimeTypes.includes(receiptFile.type)) {
+			return fail(400, { error: 'Invalid file type. Only JPEG, PNG, or WebP screenshots are allowed.' });
+		}
+
+		// Extract safe file extension mapping
+		const mimeToExt: Record<string, string> = {
+			'image/jpeg': 'jpg',
+			'image/png': 'png',
+			'image/webp': 'webp'
+		};
+		const fileExt = mimeToExt[receiptFile.type] || 'jpg';
 		const filePath = `receipts/${bookingId}_${Date.now()}.${fileExt}`;
 
+		// 2. Upload screenshot to bucket
 		const { error: uploadError } = await supabase.storage
 			.from('receipt-uploads')
-			.upload(filePath, receiptFile);
+			.upload(filePath, receiptFile, {
+				contentType: receiptFile.type,
+				cacheControl: '3600'
+			});
 
 		if (uploadError) {
 			return fail(500, { error: 'Failed to upload receipt screenshot.' });
 		}
 
-		// Retrieve Public URL
-		const {
-			data: { publicUrl }
-		} = supabase.storage.from('receipt-uploads').getPublicUrl(filePath);
+		// Retrieve URL
+		const { data: { publicUrl } } = supabase.storage.from('receipt-uploads').getPublicUrl(filePath);
 
-		// 2. Call our secure transition RPC to commit status changes
+		// 3. Call secure transition RPC to commit status changes
 		const { data: rpcResult, error: rpcError } = await supabase.rpc('finalize_receipt_submission', {
 			p_booking_id: bookingId,
 			p_invite_id: inviteId,
@@ -191,9 +215,7 @@ export const actions: Actions = {
 			return fail(500, { error: rpcResult?.error || 'Failed to finalize transaction.' });
 		}
 
-		console.log(rpcResult);
-
-		// 3. Extract the metadata returned by our RPC to dispatch the Telegram Alert
+		// 4. Safe server-side processing of notifications
 		const metadata = rpcResult;
 		const booking = metadata.booking;
 		const pkg = metadata.package;
@@ -213,7 +235,7 @@ export const actions: Actions = {
 • Venue: <i>${booking.venue_address || 'N/A'}</i>
 
 <b>Financial Breakdown:</b>
-• Service: ${pkg?.emoji} ${pkg?.name}
+• Service: ${pkg?.emoji || '💄'} ${pkg?.name || 'Package'}
 • Total Cost: <b>RM ${booking.total_amount}</b>
 • Paid Deposit: <b>RM ${booking.deposit_amount}</b>
 • Balance Due: <b>RM ${booking.balance_amount}</b>
@@ -221,8 +243,9 @@ export const actions: Actions = {
 <a href="${publicUrl}">👉 Click here to inspect the transfer receipt screenshot</a>
 			`;
 
-			// Send notification asynchronously
-			sendTelegramAlert(config.telegram_chat_id, telegramMessage.trim());
+			// We await the delivery to guarantee completion under serverless runtimes
+			const { sendTelegramAlert } = await import('$lib/telegram.server');
+			await sendTelegramAlert(config.telegram_chat_id, telegramMessage.trim());
 		}
 
 		return { success: true };
