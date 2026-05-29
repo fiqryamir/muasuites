@@ -1,6 +1,10 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
+	import { browser } from '$app/environment';
+	import { toast } from 'svelte-sonner'; // Sonner notifications
 	import * as Card from '$lib/components/ui/card';
 	import { Button } from '$lib/components/ui/button';
+	import { Input } from '$lib/components/ui/input';
 	import { Separator } from '$lib/components/ui/separator';
 
 	let { data } = $props();
@@ -8,20 +12,185 @@
 	let targetDate = $state('');
 	let availabilityStatus = $state<'FREE' | 'BOOKED' | ''>('');
 
-	// Calendar
+	// --- 1. Client-Side Travel Estimator State ---
+	let clientVenueQuery = $state('');
+	let calculatingTravel = $state(false);
+	let cooldownActive = $state(false);
+
+	let estimatedDistance = $state<number | null>(null);
+	let estimatedTravelFee = $state<number | null>(null);
+	let resolvedVenueName = $state('');
+
+	let suggestions = $state<any[]>([]);
+    let showSuggestions = $state(false);
+    let searchTimeout: ReturnType<typeof setTimeout>;
+
+	// Local session cache to save Mapbox API calls (zero-cost lookups)
+	const publicMapboxCache = new Map<string, { distanceKm: number; computedFee: number; venueName: string }>();
+
+	// --- 2. Leaflet Map Initialization ---
+	onMount(async () => {
+		if (browser && data.baseLat && data.baseLng) {
+			const L = await import('leaflet');
+
+			const map = L.map('map-container', {
+				center: [data.baseLat, data.baseLng],
+				zoom: 12,
+				zoomControl: false,
+				dragging: true,
+				scrollWheelZoom: false,
+				attributionControl: false
+			});
+
+			L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+				attribution: ''
+			}).addTo(map);
+
+			// Minimal zoom control in bottom-right
+			L.control.zoom({ position: 'bottomright' }).addTo(map);
+
+			// Custom marker — rose dot with subtle pulse
+			const markerIcon = L.divIcon({
+				className: 'custom-marker',
+				html: `<div class="marker-dot">
+						<div class="marker-ping"></div>
+						<div class="marker-core"></div>
+					</div>`,
+				iconSize: [24, 24],
+				iconAnchor: [12, 12]
+			});
+
+			L.marker([data.baseLat, data.baseLng], { icon: markerIcon })
+				.addTo(map)
+				.bindPopup(
+					`<div class="marker-popup"><p class="marker-popup-title">${data.studioName}</p><p class="marker-popup-sub">Base studio area</p></div>`
+				)
+				.openPopup();
+
+			// Force resize after mount to handle any layout shifts
+			setTimeout(() => map.invalidateSize(), 100);
+		}
+	});
+
+	// Mapbox Public geocoding and routing estimator
+	async function handleEstimateTravel() {
+		if (!data.baseLat || !data.baseLng) return;
+		
+		const queryClean = clientVenueQuery.trim().toLowerCase();
+		if (!queryClean) {
+			toast.warning('Please enter your event address or hotel name.');
+			return;
+		}
+
+		if (cooldownActive) return;
+
+		// Local memory cache check
+		if (publicMapboxCache.has(queryClean)) {
+			const cached = publicMapboxCache.get(queryClean)!;
+			estimatedDistance = cached.distanceKm;
+			estimatedTravelFee = cached.computedFee;
+			resolvedVenueName = cached.venueName;
+			toast.success('Travel estimate loaded.');
+			return;
+		}
+
+		calculatingTravel = true;
+		cooldownActive = true;
+		toast.loading('Analyzing driving distance...');
+
+		setTimeout(() => {
+			cooldownActive = false;
+		}, 3000);
+
+		try {
+			// Fetch our secure, server-side API proxy (no tokens visible in client networks!)
+			const response = await fetch('/api/estimate-travel', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					venue: clientVenueQuery,
+					baseLat: data.baseLat,
+					baseLng: data.baseLng,
+					ratePerKm: data.ratePerKm
+				})
+			});
+
+			const result = await response.json();
+			toast.dismiss();
+
+			if (!result.success) {
+				toast.error(result.error || 'Failed to analyze location.');
+				calculatingTravel = false;
+				return;
+			}
+
+			estimatedDistance = result.distanceKm;
+			estimatedTravelFee = result.computedFee;
+			resolvedVenueName = result.venueName;
+
+			// Save to cache
+			publicMapboxCache.set(queryClean, {
+				distanceKm: estimatedDistance,
+				computedFee: estimatedTravelFee,
+				venueName: resolvedVenueName
+			});
+
+			toast.success('Calculation finished!');
+		} catch (err: any) {
+			toast.dismiss();
+			console.error(err);
+			toast.error('Failed to calculate travel fee.');
+		} finally {
+			calculatingTravel = false;
+		}
+	}
+
+	async function handleInput(e: Event) {
+        const value = (e.target as HTMLInputElement).value;
+        clientVenueQuery = value;
+
+        clearTimeout(searchTimeout);
+        if (value.length < 3) {
+            suggestions = [];
+            showSuggestions = false;
+            return;
+        }
+
+        searchTimeout = setTimeout(async () => {
+            try {
+                // Call YOUR internal API route
+                const res = await fetch(`/api/search-location?q=${encodeURIComponent(value)}`);
+                const data = await res.json();
+                
+                if (data.success) {
+                    suggestions = data.features;
+                    showSuggestions = suggestions.length > 0;
+                }
+            } catch (err) {
+                console.error('Autocomplete error:', err);
+            }
+        }, 300);
+    }
+
+    function selectSuggestion(sugg: any) {
+        clientVenueQuery = sugg.place_name;
+        resolvedVenueName = sugg.text;
+        showSuggestions = false;
+        suggestions = [];
+        
+        // Optionally trigger the estimate immediately upon selection
+        handleEstimateTravel();
+    }
+
+    // Close suggestions when clicking outside
+    function closeSuggestions() {
+        setTimeout(() => { showSuggestions = false; }, 200);
+    }
+
+	// Calendar logic
 	const months = [
-		'January',
-		'February',
-		'March',
-		'April',
-		'May',
-		'June',
-		'July',
-		'August',
-		'September',
-		'October',
-		'November',
-		'December'
+		'January', 'February', 'March', 'April', 'May', 'June',
+		'July', 'August', 'September', 'October', 'November', 'December'
 	];
 	const daysOfWeek = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
 
@@ -87,9 +256,15 @@
 		return `RM ${Number(price).toLocaleString('en-MY', { minimumFractionDigits: 2 })}`;
 	}
 
+	// Dynamically appends dates, venue destination, and calculated travel fees to the WhatsApp lead link!
 	let whatsappInquiryUrl = $derived.by(() => {
 		const dateText = targetDate ? ` on ${fmtDate(targetDate)}` : '';
-		const message = `Hi ${data.studioName}! I checked your availability${dateText}. Are you available to cover my bridal event?`;
+		let message = `Hi ${data.studioName}! I checked your availability${dateText}. Are you available to cover my bridal event?`;
+		
+		if (estimatedTravelFee !== null && estimatedTravelFee > 0) {
+			message += ` My venue is at ${resolvedVenueName} (estimated travel fee: ${fmtCurrency(estimatedTravelFee)} for ${estimatedDistance} km).`;
+		}
+
 		return `https://wa.me/${data.whatsappNumber}?text=${encodeURIComponent(message)}`;
 	});
 </script>
@@ -273,6 +448,80 @@
 			</Card.Content>
 		</Card.Root>
 
+		<!-- NEW: Interactive Travel Surcharge Calculator (Only if coordinates & rate are set) -->
+		{#if data.baseLat && data.baseLng && data.ratePerKm > 0}
+			<Card.Root class="relative {showSuggestions ? 'z-50' : 'z-20'} overflow-visible">
+				<Card.Header>
+					<Card.Title>Estimate Travel Surcharge</Card.Title>
+					<Card.Description>Calculate road travel cost from our studio to your area.</Card.Description>
+				</Card.Header>
+				<Card.Content class="space-y-4 overflow-visible">
+					<div class="flex gap-2">
+						<div class="relative w-full">
+							<Input
+								id="venue-search"
+								placeholder="Type area name..."
+								value={clientVenueQuery}
+								oninput={handleInput}
+								onblur={closeSuggestions}
+								autocomplete="off"
+							/>
+							
+							{#if showSuggestions}
+								<div class="absolute z-50 mt-1 w-full rounded-md border bg-popover text-popover-foreground shadow-md outline-none animate-in fade-in-0 zoom-in-95">
+									<ul class="p-1">
+										{#each suggestions as sugg}
+											<li>
+												<button
+													type="button"
+													class="w-full rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent hover:text-accent-foreground"
+													onclick={() => selectSuggestion(sugg)}
+												>
+													<p class="font-medium">{sugg.text}</p>
+													<p class="text-muted-foreground line-clamp-1 text-[11px]">{sugg.place_name}</p>
+												</button>
+											</li>
+										{/each}
+									</ul>
+								</div>
+							{/if}
+						</div>
+			
+						<Button
+							variant="outline"
+							onclick={handleEstimateTravel}
+							disabled={calculatingTravel || !clientVenueQuery}
+							class="shrink-0"
+						>
+							{calculatingTravel ? '...' : 'Estimate'}
+						</Button>
+					</div>
+
+					{#if estimatedTravelFee !== null && estimatedDistance !== null}
+						<div class="border-primary/20 bg-primary/5 space-y-1 rounded-lg border p-4 text-center">
+							<p class="text-primary text-sm font-semibold">
+								Estimated Travel Surcharge: {fmtCurrency(estimatedTravelFee)}
+							</p>
+							<p class="text-muted-foreground text-xs">
+								One way distance is approximately <span class="font-semibold">{estimatedDistance} km</span> to <span class="font-semibold">{resolvedVenueName}</span>.
+							</p>
+						</div>
+					{/if}
+				</Card.Content>
+			</Card.Root>
+		{/if}
+
+		<!-- Interactive Leaflet Map (100% Free & Zero Key cost) -->
+		{#if data.baseLat && data.baseLng}
+			<Card.Root class="overflow-hidden">
+				<Card.Header class="pb-3">
+					<Card.Title>Our Studio Base Area</Card.Title>
+					<Card.Description>We operate and travel outwards from this base location.</Card.Description>
+				</Card.Header>
+				<div id="map-container" class="h-72 w-full border-t border-border"></div>
+			</Card.Root>
+		{/if}
+
 		<!-- Service Packages -->
 		<Card.Root>
 			<Card.Header>
@@ -309,3 +558,148 @@
 		<p class="text-muted-foreground/60 pt-2 text-center text-[11px]">Powered by MUASuites</p>
 	</div>
 </div>
+
+<style>
+:global(.leaflet-control-zoom) {
+		border: none !important;
+		border-radius: 8px !important;
+		overflow: hidden;
+		box-shadow: 0 1px 3px rgb(0 0 0 / 0.08), 0 1px 2px rgb(0 0 0 / 0.04) !important;
+	}
+
+	:global(.leaflet-control-zoom a) {
+		width: 32px !important;
+		height: 32px !important;
+		line-height: 32px !important;
+		font-size: 14px !important;
+		color: var(--foreground) !important;
+		background: var(--card) !important;
+		border: none !important;
+		border-bottom: 1px solid var(--border) !important;
+		opacity: 1 !important;
+		transition: background-color 0.15s ease;
+	}
+
+	:global(.leaflet-control-zoom a:last-child) {
+		border-bottom: none !important;
+	}
+
+	:global(.leaflet-control-zoom a:hover) {
+		background: var(--muted) !important;
+	}
+
+	/* Popup bubble */
+	:global(.leaflet-popup-content-wrapper) {
+		border-radius: 8px !important;
+		border: 1px solid var(--border) !important;
+		background: var(--card) !important;
+		box-shadow: 0 4px 12px rgb(0 0 0 / 0.08) !important;
+		padding: 0 !important;
+	}
+
+	:global(.leaflet-popup-content) {
+		margin: 10px 12px !important;
+		font-family: 'Inter Variable', sans-serif !important;
+		font-size: 13px !important;
+		line-height: 1.4 !important;
+		color: var(--foreground) !important;
+	}
+
+	:global(.leaflet-popup-tip) {
+		background: var(--card) !important;
+		border: 1px solid var(--border) !important;
+		border-top: none !important;
+		border-left: none !important;
+		box-shadow: none !important;
+	}
+
+	:global(.leaflet-popup-close-button) {
+		color: var(--muted-foreground) !important;
+		font-size: 18px !important;
+		top: 4px !important;
+		right: 6px !important;
+	}
+
+	:global(.leaflet-popup-close-button:hover) {
+		color: var(--foreground) !important;
+	}
+
+	:global(.leaflet-popup-tip-container) {
+		display: none !important;
+	}
+
+	/* Attribution */
+	:global(.leaflet-control-attribution) {
+		font-size: 9px !important;
+		color: var(--muted-foreground) !important;
+		background: var(--card) !important;
+		border-top-left-radius: 4px !important;
+		padding: 2px 6px !important;
+		opacity: 0.6;
+	}
+
+	:global(.leaflet-control-attribution a) {
+		color: var(--muted-foreground) !important;
+	}
+
+	/* Custom marker */
+	:global(.custom-marker) {
+		background: none !important;
+		border: none !important;
+	}
+
+	:global(.marker-dot) {
+		position: relative;
+		width: 24px;
+		height: 24px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+
+	:global(.marker-core) {
+		width: 12px;
+		height: 12px;
+		background: var(--primary);
+		border-radius: 50%;
+		border: 2.5px solid var(--card);
+		box-shadow: 0 1px 4px rgb(0 0 0 / 0.2);
+		position: relative;
+		z-index: 2;
+	}
+
+	:global(.marker-ping) {
+		position: absolute;
+		width: 24px;
+		height: 24px;
+		background: var(--primary);
+		border-radius: 50%;
+		opacity: 0.25;
+		animation: marker-pulse 2s ease-out infinite;
+	}
+
+	@keyframes marker-pulse {
+		0% {
+			transform: scale(0.5);
+			opacity: 0.35;
+		}
+		100% {
+			transform: scale(1.5);
+			opacity: 0;
+		}
+	}
+
+	/* Popup inner text classes (injected via HTML string) */
+	:global(.marker-popup-title) {
+		font-weight: 600;
+		font-size: 13px;
+		color: var(--foreground);
+		margin: 0;
+	}
+
+	:global(.marker-popup-sub) {
+		font-size: 11px;
+		color: var(--muted-foreground);
+		margin: 2px 0 0;
+	}
+</style>

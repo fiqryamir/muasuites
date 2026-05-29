@@ -62,6 +62,9 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 		studioName: config?.studio_name || 'Makeup Studio',
 		whatsappNumber: config?.whatsapp_number || '',
 		packages: packages || [],
-		disabledDates: Array.from(disabledDates)
+		disabledDates: Array.from(disabledDates),
+		baseLat: config?.base_lat,
+		baseLng: config?.base_lng,
+		ratePerKm: config?.rate_per_km
 	};
 };
