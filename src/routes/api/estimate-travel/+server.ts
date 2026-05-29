@@ -1,6 +1,6 @@
 import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { MAPBOX_ACCESS_TOKEN } from '$env/static/private'; // Secure private variable
+import { MAPBOX_ACCESS_TOKEN } from '$env/dynamic/private'; // Secure private variable
 
 export const POST: RequestHandler = async ({ request }) => {
     try {

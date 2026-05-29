@@ -1,7 +1,7 @@
 // /api/retrieve-location/+server.ts
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { MAPBOX_ACCESS_TOKEN } from '$env/static/private';
+import { MAPBOX_ACCESS_TOKEN } from '$env/dynamic/private';
 
 export const GET: RequestHandler = async ({ url }) => {
     const mapboxId = url.searchParams.get('id');

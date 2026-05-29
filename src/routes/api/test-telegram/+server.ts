@@ -1,6 +1,6 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { TELEGRAM_BOT_TOKEN } from '$env/static/private';
+import { TELEGRAM_BOT_TOKEN } from '$env/dynamic/private';
 
 export const POST: RequestHandler = async ({ request }) => {
 	try {

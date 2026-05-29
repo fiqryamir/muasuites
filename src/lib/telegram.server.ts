@@ -1,4 +1,4 @@
-import { TELEGRAM_BOT_TOKEN } from '$env/static/private';
+import { TELEGRAM_BOT_TOKEN } from '$env/dynamic/private';
 
 export async function sendTelegramAlert(chatId: string | null | undefined, message: string) {
 	if (!TELEGRAM_BOT_TOKEN || !chatId) {
