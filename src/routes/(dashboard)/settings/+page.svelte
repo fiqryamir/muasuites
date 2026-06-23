@@ -307,14 +307,14 @@
 		<!-- Profile & Booking Card -->
 		<Card.Root>
 			<Card.Header>
-				<Card.Title>Profile & Booking</Card.Title>
+				<Card.Title>Profile & booking</Card.Title>
 				<Card.Description>Your studio identity and how clients find and pay you.</Card.Description>
 			</Card.Header>
 			<Card.Content>
 				<form onsubmit={handleSaveConfig} class="space-y-6">
 					<!-- Booking Link -->
 					<Field class="gap-2">
-						<FieldLabel htmlFor="slug">Custom Booking Link</FieldLabel>
+						<FieldLabel htmlFor="slug">Custom booking link</FieldLabel>
 						<InputGroup class="rounded-full bg-muted border-none overflow-hidden">
 							<InputGroupAddon class="pl-4">
 								<InputGroupText class="text-muted-foreground text-sm">muasuites.com/</InputGroupText>
@@ -334,7 +334,7 @@
 					<!-- Contact Details -->
 					<FieldGroup class="grid gap-4 sm:grid-cols-2">
 						<Field class="gap-2">
-							<FieldLabel htmlFor="studio_name">Studio Name</FieldLabel>
+							<FieldLabel htmlFor="studio_name">Studio name</FieldLabel>
 							<Input
 								id="studio_name"
 								bind:value={studioName}
@@ -344,7 +344,7 @@
 							/>
 						</Field>
 						<Field class="gap-2">
-							<FieldLabel htmlFor="whatsapp">WhatsApp Number</FieldLabel>
+							<FieldLabel htmlFor="whatsapp">WhatsApp number</FieldLabel>
 							<InputGroup class="rounded-full bg-muted border-none overflow-hidden">
 								<InputGroupAddon class="pl-4">
 									<InputGroupText class="text-muted-foreground text-sm">+60</InputGroupText>
@@ -364,7 +364,7 @@
 		
 					<!-- Telegram Notifications -->
 					<Field class="gap-2">
-						<FieldLabel htmlFor="telegram">Telegram Notifications</FieldLabel>
+							<FieldLabel htmlFor="telegram">Telegram notifications</FieldLabel>
 						<div class="flex gap-2">
 							<Input
 								id="telegram"
@@ -393,7 +393,7 @@
 					<div class="space-y-4">
 						<FieldGroup class="grid gap-4 sm:grid-cols-2">
 							<Field class="gap-2">
-								<FieldLabel htmlFor="deposit_mode">Deposit Type</FieldLabel>
+								<FieldLabel htmlFor="deposit_mode">Deposit type</FieldLabel>
 								<Select.Root type="single" bind:value={depositMode}>
 									<Select.Trigger 
 										id="deposit_mode" 
@@ -411,7 +411,7 @@
 		
 							<Field class="gap-2">
 								<FieldLabel htmlFor="deposit_value">
-									{depositMode === 'FIXED' ? 'Deposit Amount' : 'Deposit Percentage'}
+									{depositMode === 'FIXED' ? 'Deposit amount' : 'Deposit percentage'}
 								</FieldLabel>
 								<InputGroup class="rounded-full bg-muted border-none overflow-hidden">
 									{#if depositMode === 'FIXED'}
@@ -437,7 +437,7 @@
 						</FieldGroup>
 		
 						<Field class="gap-2">
-							<FieldLabel htmlFor="qr_code">DuitNow QR Code</FieldLabel>
+							<FieldLabel htmlFor="qr_code">DuitNow QR code</FieldLabel>
 							<Input
 								id="qr_code"
 								type="file"
@@ -455,7 +455,7 @@
 									class="h-20 w-20 rounded-lg border border-border bg-white object-contain p-1"
 								/>
 								<div class="space-y-0.5">
-									<p class="text-sm font-medium">Current QR Code</p>
+									<p class="text-sm font-medium">Current QR code</p>
 									<p class="text-xs text-muted-foreground">Visible to clients during checkout.</p>
 								</div>
 							</div>
@@ -464,7 +464,7 @@
 		
 					<div class="flex justify-end pt-2">
 						<Button type="submit" disabled={saving} class="rounded-full px-8">
-							{saving ? 'Saving...' : 'Save Changes'}
+							{saving ? 'Saving...' : 'Save changes'}
 						</Button>
 					</div>
 				</form>
@@ -474,7 +474,7 @@
 		<!-- Service Packages Card -->
 		<Card.Root>
 			<Card.Header>
-				<Card.Title>Service Packages</Card.Title>
+				<Card.Title>Service packages</Card.Title>
 				<Card.Description>Packages available for client bookings.</Card.Description>
 			</Card.Header>
 			<Card.Content class="space-y-6">
@@ -509,14 +509,14 @@
 				<Separator />
 
 				<div class="space-y-4">
-					<h4 class="text-sm font-semibold">Add New Package</h4>
+					<h4 class="text-sm font-semibold">Add new package</h4>
 					<form onsubmit={handleAddPackage} class="grid gap-4 sm:grid-cols-[5rem_1fr_8rem]">
 						<Field class="gap-2">
 							<FieldLabel htmlFor="pkg-emoji">Icon</FieldLabel>
 							<Input id="pkg-emoji" bind:value={pkgEmoji} required class="text-center rounded-full bg-muted border-none" />
 						</Field>
 						<Field class="gap-2">
-							<FieldLabel htmlFor="pkg-name">Package Name</FieldLabel>
+							<FieldLabel htmlFor="pkg-name">Package name</FieldLabel>
 							<Input id="pkg-name" bind:value={pkgName} required placeholder="e.g., Nikah Full Glam" class="rounded-full bg-muted border-none px-4" />
 						</Field>
 						<Field class="gap-2">
@@ -525,7 +525,7 @@
 						</Field>
 						<div class="flex justify-end sm:col-span-3">
 							<Button type="submit" variant="outline" disabled={addingPackage} class="rounded-full">
-								{addingPackage ? 'Adding...' : 'Add Package'}
+								{addingPackage ? 'Adding...' : 'Add package'}
 							</Button>
 						</div>
 					</form>

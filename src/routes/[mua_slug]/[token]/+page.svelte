@@ -281,7 +281,7 @@
 				</svg>
 			</div>
 			<div class="space-y-1.5">
-				<h1 class="text-lg font-semibold tracking-tight">Link Expired</h1>
+				<h1 class="text-lg font-semibold tracking-tight">Link expired</h1>
 				<p class="text-muted-foreground mx-auto max-w-xs text-sm">
 					This booking link is no longer active. Please request a fresh link from your makeup
 					artist.
@@ -308,7 +308,7 @@
 				</svg>
 			</div>
 			<div class="space-y-1.5">
-				<h1 class="text-lg font-semibold tracking-tight">Bookings Temporarily Paused</h1>
+				<h1 class="text-lg font-semibold tracking-tight">Bookings temporarily paused</h1>
 				<p class="text-muted-foreground mx-auto max-w-xs text-sm">
 					{data.studioName} is currently at full capacity. Please message them directly.
 				</p>
@@ -321,7 +321,7 @@
 			<div class="animate-in-up w-full max-w-md">
 				<!-- Studio name header -->
 				<div class="mb-6 space-y-1 text-center">
-					<p class="text-muted-foreground text-xs font-medium tracking-wider uppercase">
+					<p class="text-xs font-medium text-muted-foreground">
 						Booking with
 					</p>
 					<p class="text-base font-semibold tracking-tight">{data.studioName}</p>
@@ -341,10 +341,10 @@
 								></div>
 							{/each}
 						</div>
-						<Card.Title class="text-lg">
-							{#if currentStep === 1}Choose Your Date{:else if currentStep === 2}Select a Package{:else if currentStep === 3}Event
-								Details{:else if currentStep === 4}Your Details{:else}Review & Confirm{/if}
-						</Card.Title>
+				<Card.Title class="text-lg">
+						{#if currentStep === 1}Choose your date{:else if currentStep === 2}Select a package{:else if currentStep === 3}Event
+							details{:else if currentStep === 4}Your details{:else}Review & confirm{/if}
+					</Card.Title>
 						<Card.Description class="text-xs">Step {currentStep} of 5</Card.Description>
 					</Card.Header>
 
@@ -356,10 +356,10 @@
 							<div class="space-y-4">
 								<div class="border-border bg-card rounded-lg border">
 									<div class="flex items-center justify-between px-4 py-3">
-										<button
-											type="button"
-											onclick={() => navigateMonth(-1)}
-											class="hover:bg-muted flex h-8 w-8 items-center justify-center rounded-md transition-colors"
+								<button
+														type="button"
+														onclick={() => navigateMonth(-1)}
+														class="hover:bg-muted flex min-h-11 min-w-11 items-center justify-center rounded-md transition-colors"
 										>
 											<svg
 												class="h-4 w-4"
@@ -376,10 +376,10 @@
 											</svg>
 										</button>
 										<p class="text-sm font-semibold">{months[currentMonth]} {currentYear}</p>
-										<button
-											type="button"
-											onclick={() => navigateMonth(1)}
-											class="hover:bg-muted flex h-8 w-8 items-center justify-center rounded-md transition-colors"
+								<button
+														type="button"
+														onclick={() => navigateMonth(1)}
+														class="hover:bg-muted flex min-h-11 min-w-11 items-center justify-center rounded-md transition-colors"
 										>
 											<svg
 												class="h-4 w-4"
@@ -400,7 +400,7 @@
 										<div class="mb-1 grid grid-cols-7">
 											{#each daysOfWeek as day}
 												<div
-													class="text-muted-foreground flex h-8 items-center justify-center text-[11px] font-medium"
+													class="text-muted-foreground flex h-9 items-center justify-center text-[11px] font-medium"
 												>
 													{day}
 												</div>
@@ -416,7 +416,7 @@
 															type="button"
 															onclick={() => selectDay(day)}
 															disabled={isPast(day)}
-															class="relative flex h-8 w-8 items-center justify-center rounded-md text-sm transition-colors
+															class="relative flex min-h-11 min-w-11 items-center justify-center rounded-md text-sm transition-colors
 																{isSelected(day)
 																? 'bg-primary text-primary-foreground font-semibold'
 																: isPast(day)
@@ -517,7 +517,7 @@
 						{:else if currentStep === 3}
 							<div class="space-y-4">
 								<Field class="gap-2">
-									<FieldLabel>Ready Time</FieldLabel>
+									<FieldLabel>Ready time</FieldLabel>
 									<div class="flex items-center gap-2">
 										<div class="flex-1">
 											<Select.Root type="single" bind:value={selectedHour}>
@@ -570,7 +570,7 @@
 								<Separator />
 
 								<Field class="gap-2">
-									<FieldLabel htmlFor="address">Venue Address</FieldLabel>
+									<FieldLabel htmlFor="address">Venue address</FieldLabel>
 									<Input
 										id="address"
 										placeholder="e.g., Grand Hyatt KL, Shah Alam residence"
@@ -601,7 +601,7 @@
 								</p>
 
 								<Field class="gap-2">
-									<FieldLabel htmlFor="name">Full Name</FieldLabel>
+									<FieldLabel htmlFor="name">Full name</FieldLabel>
 									<Input
 										id="name"
 										placeholder="Your full name"
@@ -615,7 +615,7 @@
 								</Field>
 
 								<Field class="gap-2">
-									<FieldLabel htmlFor="phone">WhatsApp Number</FieldLabel>
+									<FieldLabel htmlFor="phone">WhatsApp number</FieldLabel>
 									<InputGroup class="bg-muted overflow-hidden rounded-full border-none">
 										<InputGroupAddon class="pl-4">
 											<InputGroupText class="text-muted-foreground text-sm">+60</InputGroupText>
@@ -642,7 +642,7 @@
 									class="rounded-full px-6"
 									onclick={() => (currentStep = 3)}>Back</Button
 								>
-								<Button class="rounded-full px-6" onclick={() => goNext(5)}>Review Booking</Button>
+								<Button class="rounded-full px-6" onclick={() => goNext(5)}>Review booking</Button>
 							</div>
 
 							<!-- STEP 5: Review & Confirm -->
@@ -661,13 +661,13 @@
 									</div>
 									<div class="flex items-center justify-between py-3">
 										<div class="space-y-0.5">
-											<p class="text-muted-foreground text-xs">Event Date</p>
+											<p class="text-muted-foreground text-xs">Event date</p>
 											<p class="text-sm font-medium">{fmtDate(selectedDate)}</p>
 										</div>
 									</div>
 									<div class="flex items-center justify-between py-3">
 										<div class="space-y-0.5">
-											<p class="text-muted-foreground text-xs">Ready Time</p>
+											<p class="text-muted-foreground text-xs">Ready time</p>
 											<p class="text-sm font-medium">{eventTimeDisplay}</p>
 										</div>
 									</div>
@@ -713,7 +713,7 @@
 
 								<div class="border-primary/20 bg-primary/5 space-y-1.5 rounded-lg border p-4">
 									<div class="flex justify-between">
-										<p class="text-primary text-sm font-semibold">Deposit Required</p>
+										<p class="text-primary text-sm font-semibold">Deposit required</p>
 										<p class="text-primary text-sm font-bold tabular-nums">
 											{fmtCurrency(depositAmount)}
 										</p>
@@ -751,7 +751,7 @@
 											>Back</Button
 										>
 										<Button type="submit" disabled={securing} class="flex-1">
-											{securing ? 'Securing your slot...' : 'Secure My Slot'}
+											{securing ? 'Securing your slot...' : 'Secure my slot'}
 										</Button>
 									</div>
 								</form>
@@ -766,7 +766,7 @@
 			<div class="animate-in-up w-full max-w-md space-y-6">
 				<div class="space-y-2">
 					<div class="flex items-center justify-between">
-						<p class="text-muted-foreground text-xs font-medium tracking-wider uppercase">
+						<p class="text-xs font-medium text-muted-foreground">
 							Reservation expires in
 						</p>
 						<p class="text-primary text-sm font-semibold tabular-nums">{timerString}</p>
@@ -781,7 +781,7 @@
 
 				<Card.Root>
 					<Card.Header>
-						<Card.Title>Transfer Deposit</Card.Title>
+						<Card.Title>Transfer deposit</Card.Title>
 						<Card.Description>
 							Please transfer <span class="text-foreground font-semibold"
 								>{fmtCurrency(depositAmount)}</span
@@ -835,7 +835,7 @@
 							<input type="hidden" name="booking_id" value={bookingId} />
 							<input type="hidden" name="invite_id" value={data.invite?.id} />
 							<Field class="gap-2">
-								<FieldLabel htmlFor="receipt">Payment Receipt</FieldLabel>
+								<FieldLabel htmlFor="receipt">Payment receipt</FieldLabel>
 								<Input 
 									id="receipt" 
 									name="receipt" 
@@ -847,7 +847,7 @@
 								<p class="px-2 text-xs text-muted-foreground">Upload a screenshot of your transfer confirmation.</p>
 							</Field>
 							<Button type="submit" disabled={submitting} class="w-full">
-								{submitting ? 'Uploading...' : 'Submit Receipt'}
+								{submitting ? 'Uploading...' : 'Submit receipt'}
 							</Button>
 						</form>
 					</Card.Content>
@@ -869,7 +869,7 @@
 					</svg>
 				</div>
 				<div class="space-y-2">
-					<h1 class="text-lg font-semibold tracking-tight">Receipt Submitted</h1>
+					<h1 class="text-lg font-semibold tracking-tight">Receipt submitted</h1>
 					<p class="text-muted-foreground text-sm leading-relaxed">
 						{data.studioName} will verify and confirm your booking shortly.
 					</p>
@@ -884,13 +884,14 @@
 						<span class="font-medium">{fmtDate(selectedDate)}</span>
 					</div>
 				</div>
-				<a
+				<Button
 					href={`https://wa.me/${form?.bankConfig?.whatsapp_number || ''}?text=${encodeURIComponent(`Hi! I've submitted my deposit of RM ${depositAmount} for my event on ${selectedDate}.`)}`}
 					target="_blank"
-					class="bg-foreground text-background hover:bg-foreground/90 inline-flex w-full items-center justify-center gap-2 rounded-md px-6 py-2.5 text-sm font-medium transition-colors"
+					variant="default"
+					class="w-full rounded-full"
 				>
 					Notify on WhatsApp
-				</a>
+				</Button>
 			</div>
 		{/if}
 	{/if}

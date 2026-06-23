@@ -255,7 +255,7 @@
 					}
 				}}
 			>
-				{showGenerator ? 'Close' : 'Create Link'}
+				{showGenerator ? 'Close' : 'Create link'}
 			</Button>
 		</div>
 
@@ -290,7 +290,7 @@
 		{#if showGenerator}
 			<Card.Root class="animate-in-up">
 				<Card.Header>
-					<Card.Title>Invite Link Generator</Card.Title>
+					<Card.Title>Invite link generator</Card.Title>
 					<Card.Description>
 						Set fees for this client. The link lets them select a package, enter details, and pay
 						their deposit.
@@ -316,7 +316,7 @@
 							<!-- Action Buttons -->
 							<div class="flex flex-col gap-2 sm:flex-row sm:justify-end">
 								<Button variant="outline" onclick={copyToClipboard}>
-									Copy Link
+									Copy link
 								</Button>
 								<Button
 									onclick={() =>
@@ -343,7 +343,7 @@
 						<form onsubmit={handleGenerateLink} class="space-y-4">
 							<FieldGroup class="gap-4">
 								<Field class="gap-2">
-									<FieldLabel htmlFor="transport">Transport Fee</FieldLabel>
+									<FieldLabel htmlFor="transport">Transport fee</FieldLabel>
 									<InputGroup>
 										<InputGroupAddon>
 											<InputGroupText class="text-muted-foreground"
@@ -366,7 +366,7 @@
 								</div> -->
 
 								<Field class="gap-2">
-									<FieldLabel htmlFor="surcharge">Custom Surcharge</FieldLabel>
+									<FieldLabel htmlFor="surcharge">Custom surcharge</FieldLabel>
 									<InputGroup>
 										<InputGroupAddon>
 											<InputGroupText class="text-muted-foreground"
@@ -384,7 +384,7 @@
 								</Field>
 
 								<Field class="gap-2">
-									<FieldLabel htmlFor="remark">Surcharge Remark</FieldLabel>
+									<FieldLabel htmlFor="remark">Surcharge remark</FieldLabel>
 									<Input
 									id="remark"
 									placeholder="e.g., early morning surcharge, holiday fee"
@@ -400,7 +400,7 @@
 								<!-- Deposit Mode Selection -->
 								<Field class="gap-2">
 									<FieldLabel htmlFor="dep_mode">
-										Deposit Override <span class="font-normal text-muted-foreground">(optional)</span>
+										Deposit override <span class="font-normal text-muted-foreground">(optional)</span>
 									</FieldLabel>
 									<Select.Root type="single" bind:value={depositModeOverride}>
 										<Select.Trigger id="dep_mode" class="flex h-10 w-full items-center justify-between rounded-full border-none bg-muted px-4 py-2 text-sm ring-offset-background focus:ring-2 focus:ring-ring">
@@ -418,7 +418,7 @@
 								<!-- Deposit Value Input -->
 								<Field class="gap-2">
 									<FieldLabel htmlFor="dep_val">
-										Override Value <span class="font-normal text-muted-foreground">(optional)</span>
+										Override value <span class="font-normal text-muted-foreground">(optional)</span>
 									</FieldLabel>
 									<InputGroup>
 										{#if depositModeOverride === 'FIXED'}
@@ -446,7 +446,7 @@
 
 							<div class="flex justify-end pt-2">
 								<Button type="submit" disabled={generating}>
-									{generating ? 'Generating...' : 'Generate Link'}
+									{generating ? 'Generating...' : 'Generate link'}
 								</Button>
 							</div>
 						</form>
@@ -466,7 +466,7 @@
 					payment will appear here for review.
 				</p>
 				<div class="pt-2">
-					<Button onclick={() => (showGenerator = true)}>Create Your First Link</Button>
+					<Button onclick={() => (showGenerator = true)}>Create your first link</Button>
 				</div>
 			</div>
 		{:else}
@@ -476,7 +476,7 @@
 					<div class="flex items-center gap-2">
 						<span class="h-2 w-2 rounded-full bg-primary"></span>
 						<h2 class="text-sm font-semibold">
-							Pending Review
+							Pending review
 							<span class="font-normal text-muted-foreground"
 								>({pendingBookings.length})</span
 							>
@@ -587,7 +587,7 @@
 											<a
 												href={`https://wa.me/${booking.client_phone?.replace?.(/^0/, '60') || booking.client_phone}`}
 												target="_blank"
-												class="inline-flex h-8 items-center rounded-md px-3 text-xs text-muted-foreground hover:text-foreground transition-colors"
+												class="inline-flex min-h-11 items-center rounded-md px-3 text-xs text-muted-foreground hover:text-foreground transition-colors"
 											>
 												WhatsApp
 											</a>
@@ -595,7 +595,7 @@
 										<a
 											href={`/api/calendar/${booking.id}?token=${accessToken}`}
 											target="_blank"
-											class="inline-flex h-8 items-center rounded-md border border-border bg-background px-3 text-xs font-medium hover:bg-muted transition-colors"
+											class="inline-flex min-h-11 items-center rounded-md border border-border bg-background px-3 text-xs font-medium hover:bg-muted transition-colors"
 										>
 											Download .ics
 										</a>

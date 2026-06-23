@@ -280,25 +280,25 @@
 			</div>
 			<div class="space-y-1">
 				<h1 class="text-xl font-semibold tracking-tight">{data.studioName}</h1>
-				<p class="text-muted-foreground text-sm">Makeup Artist Services</p>
+				<p class="text-muted-foreground text-sm">Makeup artist services</p>
 			</div>
 		</div>
 
 		<!-- Availability Checker -->
 		<Card.Root>
 			<Card.Header>
-				<Card.Title>Check Date Availability</Card.Title>
+				<Card.Title>Check date availability</Card.Title>
 				<Card.Description>See if your event date is open before reaching out.</Card.Description>
 			</Card.Header>
 			<Card.Content class="space-y-4">
 				<!-- Calendar -->
 				<div class="border-border bg-card rounded-lg border">
 					<div class="flex items-center justify-between px-4 py-3">
-						<button
-							type="button"
-							onclick={() => navigateMonth(-1)}
-							class="hover:bg-muted flex h-8 w-8 items-center justify-center rounded-md transition-colors"
-						>
+					<button
+						type="button"
+						onclick={() => navigateMonth(-1)}
+						class="hover:bg-muted flex min-h-11 min-w-11 items-center justify-center rounded-md transition-colors"
+					>
 							<svg
 								class="h-4 w-4"
 								fill="none"
@@ -314,11 +314,11 @@
 							</svg>
 						</button>
 						<p class="text-sm font-semibold">{months[currentMonth]} {currentYear}</p>
-						<button
-							type="button"
-							onclick={() => navigateMonth(1)}
-							class="hover:bg-muted flex h-8 w-8 items-center justify-center rounded-md transition-colors"
-						>
+					<button
+						type="button"
+						onclick={() => navigateMonth(1)}
+						class="hover:bg-muted flex min-h-11 min-w-11 items-center justify-center rounded-md transition-colors"
+					>
 							<svg
 								class="h-4 w-4"
 								fill="none"
@@ -354,7 +354,7 @@
 											type="button"
 											onclick={() => selectDay(day)}
 											disabled={isPast(day)}
-											class="relative flex h-8 w-8 items-center justify-center rounded-md text-sm transition-colors
+											class="relative flex min-h-11 min-w-11 items-center justify-center rounded-md text-sm transition-colors
 												{isSelected(day)
 												? 'bg-primary text-primary-foreground font-semibold'
 												: isPast(day)
@@ -452,7 +452,7 @@
 		{#if data.baseLat && data.baseLng && data.ratePerKm > 0}
 			<Card.Root class="relative {showSuggestions ? 'z-50' : 'z-20'} overflow-visible">
 				<Card.Header>
-					<Card.Title>Estimate Travel Surcharge</Card.Title>
+					<Card.Title>Estimate travel surcharge</Card.Title>
 					<Card.Description>Calculate road travel cost from our studio to your area.</Card.Description>
 				</Card.Header>
 				<Card.Content class="space-y-4 overflow-visible">
@@ -500,7 +500,7 @@
 					{#if estimatedTravelFee !== null && estimatedDistance !== null}
 						<div class="border-primary/20 bg-primary/5 space-y-1 rounded-lg border p-4 text-center">
 							<p class="text-primary text-sm font-semibold">
-								Estimated Travel Surcharge: {fmtCurrency(estimatedTravelFee)}
+								Estimated travel surcharge: {fmtCurrency(estimatedTravelFee)}
 							</p>
 							<p class="text-muted-foreground text-xs">
 								One way distance is approximately <span class="font-semibold">{estimatedDistance} km</span> to <span class="font-semibold">{resolvedVenueName}</span>.
@@ -515,7 +515,7 @@
 		{#if data.baseLat && data.baseLng}
 			<Card.Root class="overflow-hidden">
 				<Card.Header class="pb-3">
-					<Card.Title>Our Studio Base Area</Card.Title>
+					<Card.Title>Our studio base area</Card.Title>
 					<Card.Description>We operate and travel outwards from this base location.</Card.Description>
 				</Card.Header>
 				<div id="map-container" class="h-72 w-full border-t border-border"></div>
@@ -525,7 +525,7 @@
 		<!-- Service Packages -->
 		<Card.Root>
 			<Card.Header>
-				<Card.Title>Service Packages</Card.Title>
+				<Card.Title>Service packages</Card.Title>
 				<Card.Description>Available services and pricing.</Card.Description>
 			</Card.Header>
 			<Card.Content>

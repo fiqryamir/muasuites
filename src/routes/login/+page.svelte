@@ -116,7 +116,7 @@
 						{/if}
 
 						<Button type="submit" disabled={loading} class="w-full">
-							{loading ? 'Sending link...' : 'Send Magic Link'}
+							{loading ? 'Sending link...' : 'Send magic link'}
 						</Button>
 					</form>
 				{/if}
