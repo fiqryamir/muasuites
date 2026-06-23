@@ -6,7 +6,6 @@
 	import * as Card from '$lib/components/ui/card';
 	import { Button } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
-	import { Separator } from '$lib/components/ui/separator';
 	import {
 		InputGroup,
 		InputGroupAddon,
@@ -24,6 +23,7 @@
 	let muaSlug = $state('');
 	let muaPlan = $state<'FREE' | 'PRO' | 'ELITE'>('FREE');
 	let accessToken = $state('');
+	let studioName = $state('');
 
 	let bookings = $state<any[]>([]);
 
@@ -68,6 +68,14 @@
 		).length
 	);
 
+	// Greeting based on time of day
+	const greeting = $derived.by(() => {
+		const hour = new Date().getHours();
+		if (hour < 12) return 'Good morning';
+		if (hour < 18) return 'Good afternoon';
+		return 'Good evening';
+	});
+
 	const inviteSchema = z.object({
 		transportOverride: z.number().nonnegative('Transport fee must be 0 or more.'),
 		customSurcharge: z.number().nonnegative('Surcharge must be 0 or more.'),
@@ -84,6 +92,13 @@
 		});
 	}
 
+	function fmtDateShort(d: string) {
+		return new Date(d + 'T00:00:00').toLocaleDateString('en-MY', {
+			day: 'numeric',
+			month: 'short'
+		});
+	}
+
 	function fmtTime(t: string) {
 		if (!t) return '';
 		const [h, m] = t.split(':');
@@ -95,6 +110,18 @@
 
 	function fmtCurrency(a: number | string) {
 		return `RM ${Number(a).toLocaleString('en-MY', { minimumFractionDigits: 2 })}`;
+	}
+
+	function getDayNum(d: string) {
+		return new Date(d + 'T00:00:00').getDate();
+	}
+
+	function getMonthShort(d: string) {
+		return new Date(d + 'T00:00:00').toLocaleDateString('en-MY', { month: 'short' });
+	}
+
+	function getWeekday(d: string) {
+		return new Date(d + 'T00:00:00').toLocaleDateString('en-MY', { weekday: 'short' });
 	}
 
 	onMount(async () => {
@@ -111,6 +138,17 @@
 		if (mua) {
 			muaSlug = mua.slug;
 			muaPlan = mua.subscription_plan;
+		}
+
+		// Fetch studio name for greeting
+		const { data: config } = await supabase
+			.from('mua_configs')
+			.select('studio_name')
+			.eq('mua_id', userId)
+			.single();
+
+		if (config?.studio_name) {
+			studioName = config.studio_name;
 		}
 
 		await loadBookings();
@@ -215,7 +253,7 @@
 </script>
 
 {#if loading}
-	<div class="flex items-center justify-center py-24">
+	<div class="flex items-center justify-center py-32">
 		<div class="flex items-center gap-3 text-muted-foreground">
 			<svg
 				class="h-4 w-4 animate-spin"
@@ -231,22 +269,58 @@
 					d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
 				></path>
 			</svg>
-			<span class="text-sm">Loading bookings...</span>
+			<span class="text-sm">Loading your bookings…</span>
 		</div>
 	</div>
 {:else}
 	<div class="space-y-6 sm:space-y-8 animate-in-up">
-		<!-- Header -->
-		<div class="flex items-start justify-between gap-4">
-			<div>
-				<h1 class="text-2xl font-semibold tracking-tight">Bookings</h1>
-				<p class="mt-1 text-sm text-muted-foreground">
-					Your schedule and client checkouts at a glance.
+		<!-- Greeting header -->
+		<div>
+			<h1 class="text-wrap-balance text-2xl font-semibold tracking-tight">
+				{greeting}{studioName ? `, ${studioName}` : ''}
+			</h1>
+			<p class="mt-1 text-sm text-muted-foreground">
+				{#if bookings.length === 0}
+					Your booking calendar is empty — let's fill it.
+				{:else if activeBookingsCount > 0}
+					{activeBookingsCount} active booking{activeBookingsCount !== 1 ? 's' : ''} this month.
+				{:else}
+					{bookings.length} booking{bookings.length !== 1 ? 's' : ''} on file.
+				{/if}
+			</p>
+		</div>
+
+		<!-- Stat cards -->
+		<div class="grid grid-cols-3 gap-3">
+			<div class="rounded-xl bg-muted/40 p-3 text-center sm:p-4">
+				<p class="text-xl font-semibold tabular-nums sm:text-2xl">
+					{pendingBookings.length}
+				</p>
+				<p class="mt-0.5 text-xs text-muted-foreground">Needs review</p>
+			</div>
+			<div class="rounded-xl bg-muted/40 p-3 text-center sm:p-4">
+				<p class="text-xl font-semibold tabular-nums sm:text-2xl">
+					{upcomingBookings.length}
+				</p>
+				<p class="mt-0.5 text-xs text-muted-foreground">Confirmed</p>
+			</div>
+			<div class="rounded-xl bg-muted/40 p-3 text-center sm:p-4">
+				<p class="text-xl font-semibold tabular-nums sm:text-2xl">
+					{activeBookingsCount}<span
+						class="text-sm font-normal text-muted-foreground"
+						>{muaPlan === 'FREE' ? ' / 5' : ''}</span
+					>
+				</p>
+				<p class="mt-0.5 text-xs text-muted-foreground">
+					{muaPlan === 'FREE' ? 'Free slots' : 'Active'}
 				</p>
 			</div>
+		</div>
+
+		<!-- Create link button (always visible) -->
+		<div>
 			<Button
 				variant={showGenerator ? 'outline' : 'default'}
-				class="shrink-0"
 				onclick={() => {
 					if (showGenerator) {
 						resetGenerator();
@@ -254,36 +328,15 @@
 						showGenerator = true;
 					}
 				}}
+				class="gap-1.5"
 			>
-				{showGenerator ? 'Close' : 'Create link'}
+				{#if showGenerator}
+					Close
+				{:else}
+					<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+					Create link
+				{/if}
 			</Button>
-		</div>
-
-		<!-- Quick Stats -->
-		<div class="grid grid-cols-3 overflow-hidden rounded-lg border border-border">
-			<div class="border-r border-border p-3 text-center sm:p-4">
-				<p class="text-xl font-semibold tabular-nums sm:text-2xl">
-					{pendingBookings.length}
-				</p>
-				<p class="mt-0.5 text-[11px] text-muted-foreground sm:text-xs">Pending</p>
-			</div>
-			<div class="border-r border-border p-3 text-center sm:p-4">
-				<p class="text-xl font-semibold tabular-nums sm:text-2xl">
-					{upcomingBookings.length}
-				</p>
-				<p class="mt-0.5 text-[11px] text-muted-foreground sm:text-xs">Confirmed</p>
-			</div>
-			<div class="p-3 text-center sm:p-4">
-				<p class="text-xl font-semibold tabular-nums sm:text-2xl">
-					{activeBookingsCount}<span
-						class="text-base font-normal text-muted-foreground sm:text-lg"
-						>{muaPlan === 'FREE' ? ' / 2' : ''}</span
-					>
-				</p>
-				<p class="mt-0.5 text-[11px] text-muted-foreground sm:text-xs">
-					{muaPlan === 'FREE' ? 'Free slots' : 'Active'}
-				</p>
-			</div>
 		</div>
 
 		<!-- Generator Panel -->
@@ -301,7 +354,7 @@
 						<div class="space-y-4">
 							<!-- Generated Link Display -->
 							<div
-								class="rounded-lg border border-border bg-muted/40 p-4"
+								class="rounded-xl bg-muted/40 p-4"
 							>
 								<p class="mb-2 text-xs font-medium text-muted-foreground">
 									Your invite link
@@ -343,7 +396,7 @@
 						<form onsubmit={handleGenerateLink} class="space-y-4">
 							<FieldGroup class="gap-4">
 								<Field class="gap-2">
-									<FieldLabel htmlFor="transport">Transport fee</FieldLabel>
+									<FieldLabel>Transport fee</FieldLabel>
 									<InputGroup>
 										<InputGroupAddon>
 											<InputGroupText class="text-muted-foreground"
@@ -359,14 +412,9 @@
 										/>
 									</InputGroup>
 								</Field>
-								<!-- <div class="space-y-2">
-									<label for="transport" class="text-sm font-medium">
-										Transport Fee
-									</label>
-								</div> -->
 
 								<Field class="gap-2">
-									<FieldLabel htmlFor="surcharge">Custom surcharge</FieldLabel>
+									<FieldLabel>Custom surcharge</FieldLabel>
 									<InputGroup>
 										<InputGroupAddon>
 											<InputGroupText class="text-muted-foreground"
@@ -384,7 +432,7 @@
 								</Field>
 
 								<Field class="gap-2">
-									<FieldLabel htmlFor="remark">Surcharge remark</FieldLabel>
+									<FieldLabel>Surcharge remark</FieldLabel>
 									<Input
 									id="remark"
 									placeholder="e.g., early morning surcharge, holiday fee"
@@ -393,13 +441,13 @@
 								</Field>
 							</FieldGroup>
 
-							<Separator />
+							<div class="bg-border h-px w-full"></div>
 
 							<!-- Deposit overrides -->
 							<FieldGroup class="grid gap-4 sm:grid-cols-2">
 								<!-- Deposit Mode Selection -->
 								<Field class="gap-2">
-									<FieldLabel htmlFor="dep_mode">
+									<FieldLabel>
 										Deposit override <span class="font-normal text-muted-foreground">(optional)</span>
 									</FieldLabel>
 									<Select.Root type="single" bind:value={depositModeOverride}>
@@ -417,7 +465,7 @@
 							
 								<!-- Deposit Value Input -->
 								<Field class="gap-2">
-									<FieldLabel htmlFor="dep_val">
+									<FieldLabel>
 										Override value <span class="font-normal text-muted-foreground">(optional)</span>
 									</FieldLabel>
 									<InputGroup>
@@ -446,7 +494,7 @@
 
 							<div class="flex justify-end pt-2">
 								<Button type="submit" disabled={generating}>
-									{generating ? 'Generating...' : 'Generate link'}
+									{generating ? 'Generating…' : 'Generate link'}
 								</Button>
 							</div>
 						</form>
@@ -457,16 +505,22 @@
 
 		<!-- Empty state when nothing exists -->
 		{#if bookings.length === 0 && !showGenerator}
-			<div
-				class="rounded-lg border border-dashed border-border py-12 text-center space-y-2"
-			>
-				<p class="text-sm font-medium">No bookings yet</p>
-				<p class="text-xs text-muted-foreground max-w-xs mx-auto">
-					Create an invite link and share it with your client on WhatsApp. Their deposit
-					payment will appear here for review.
-				</p>
-				<div class="pt-2">
-					<Button onclick={() => (showGenerator = true)}>Create your first link</Button>
+			<div class="rounded-xl border border-dashed border-border py-14 text-center space-y-3">
+				<div class="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-muted text-xl">
+					📅
+				</div>
+				<div class="space-y-1">
+					<p class="text-sm font-medium">No bookings yet</p>
+					<p class="text-xs text-muted-foreground max-w-xs mx-auto">
+						Your booking calendar is clear. Create an invite link and share it with your client — their
+						payment will appear here for review.
+					</p>
+				</div>
+				<div class="pt-1">
+					<Button onclick={() => (showGenerator = true)} class="gap-1.5">
+						<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+						Create your first link
+					</Button>
 				</div>
 			</div>
 		{:else}
@@ -475,8 +529,8 @@
 				<section class="space-y-3">
 					<div class="flex items-center gap-2">
 						<span class="h-2 w-2 rounded-full bg-primary"></span>
-						<h2 class="text-sm font-semibold">
-							Pending review
+						<h2 class="text-wrap-balance text-sm font-semibold">
+							Needs review
 							<span class="font-normal text-muted-foreground"
 								>({pendingBookings.length})</span
 							>
@@ -513,9 +567,10 @@
 											<a
 												href={booking.receipt_url}
 												target="_blank"
-												class="text-xs text-muted-foreground hover:text-foreground underline underline-offset-2 transition-colors"
+												class="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground underline underline-offset-2 transition-colors"
 											>
 												View receipt
+												<svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" x2="21" y1="14" y2="3"/></svg>
 											</a>
 										{/if}
 										<div class="flex-1"></div>
@@ -535,7 +590,7 @@
 
 			<!-- Upcoming Schedule -->
 			<section class="space-y-3">
-				<h2 class="text-sm font-semibold">
+				<h2 class="text-wrap-balance text-sm font-semibold">
 					Upcoming
 					<span class="font-normal text-muted-foreground"
 						>({upcomingBookings.length})</span
@@ -546,66 +601,81 @@
 					<div class="space-y-2">
 						{#each upcomingBookings as booking}
 							<Card.Root>
-								<Card.Content class="">
-									<div class="flex items-start justify-between gap-3">
-										<div class="min-w-0 flex-1 space-y-0.5">
-											<p class="text-sm font-medium truncate">
-												{booking.client_name || 'Client'}
+								<Card.Content>
+									<div class="flex gap-4">
+										<!-- Date anchor (left column) -->
+										<div class="shrink-0 text-center">
+											<p class="text-[11px] font-medium uppercase text-muted-foreground leading-none">
+												{getMonthShort(booking.event_date)}
 											</p>
-											<p class="text-xs text-muted-foreground">
-												{fmtDate(booking.event_date)}
-												{#if booking.event_time}
-													&middot; {fmtTime(booking.event_time)}
-												{/if}
-												{#if booking.venue_address}
-													<br class="sm:hidden" />
-													<span class="hidden sm:inline">&middot;</span>
-													{booking.venue_address}
-												{/if}
+											<p class="text-2xl font-semibold leading-tight tabular-nums">
+												{getDayNum(booking.event_date)}
 											</p>
-											{#if booking.packages?.name}
-												<p class="text-xs text-muted-foreground">
-													{booking.packages.emoji}
-													{booking.packages.name}
-												</p>
-											{/if}
+											<p class="text-[11px] text-muted-foreground leading-none">
+												{getWeekday(booking.event_date)}
+											</p>
 										</div>
-										<div class="shrink-0 text-right space-y-0.5">
-											<p class="text-sm font-semibold tabular-nums">
-												{fmtCurrency(booking.total_amount)}
-											</p>
-											{#if booking.balance_amount > 0}
-												<p class="text-[11px] text-muted-foreground">
-													Balance: {fmtCurrency(booking.balance_amount)}
-												</p>
-											{/if}
-										</div>
-									</div>
 
-									<div class="flex items-center justify-end gap-2 pt-3">
-										{#if booking.client_phone}
-											<a
-												href={`https://wa.me/${booking.client_phone?.replace?.(/^0/, '60') || booking.client_phone}`}
-												target="_blank"
-												class="inline-flex min-h-11 items-center rounded-md px-3 text-xs text-muted-foreground hover:text-foreground transition-colors"
-											>
-												WhatsApp
-											</a>
-										{/if}
-										<a
-											href={`/api/calendar/${booking.id}?token=${accessToken}`}
-											target="_blank"
-											class="inline-flex min-h-11 items-center rounded-md border border-border bg-background px-3 text-xs font-medium hover:bg-muted transition-colors"
-										>
-											Download .ics
-										</a>
+										<!-- Details (right column) -->
+										<div class="min-w-0 flex-1 space-y-1">
+											<div class="flex items-start justify-between gap-2">
+												<div class="min-w-0">
+													<p class="text-sm font-medium truncate">
+														{booking.client_name || 'Client'}
+													</p>
+													<p class="text-xs text-muted-foreground">
+														{fmtTime(booking.event_time)}
+														{#if booking.packages?.name}
+															&middot; {booking.packages.emoji}
+															{booking.packages.name}
+														{/if}
+													</p>
+													{#if booking.venue_address}
+														<p class="mt-0.5 text-xs text-muted-foreground truncate">
+															{booking.venue_address}
+														</p>
+													{/if}
+												</div>
+												<div class="shrink-0 text-right space-y-0.5">
+													<p class="text-sm font-semibold tabular-nums">
+														{fmtCurrency(booking.total_amount)}
+													</p>
+													{#if booking.balance_amount > 0}
+														<p class="text-[11px] text-muted-foreground">
+															Balance: {fmtCurrency(booking.balance_amount)}
+														</p>
+													{/if}
+												</div>
+											</div>
+
+											<!-- Actions -->
+											<div class="flex items-center gap-1 pt-1">
+												{#if booking.client_phone}
+													<a
+														href={`https://wa.me/${booking.client_phone?.replace?.(/^0/, '60') || booking.client_phone}`}
+														target="_blank"
+														class="inline-flex min-h-9 items-center rounded-md px-2.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+													>
+														WhatsApp
+													</a>
+												{/if}
+												<a
+													href={`/api/calendar/${booking.id}?token=${accessToken}`}
+													target="_blank"
+													aria-label="Add to calendar"
+													class="inline-flex size-9 items-center justify-center rounded-md text-muted-foreground hover:bg-muted transition-colors"
+												>
+													<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
+												</a>
+											</div>
+										</div>
 									</div>
 								</Card.Content>
 							</Card.Root>
 						{/each}
 					</div>
 				{:else}
-					<div class="rounded-lg border border-dashed border-border py-8 text-center">
+					<div class="rounded-xl border border-dashed border-border py-8 text-center">
 						<p class="text-xs text-muted-foreground">No upcoming confirmed events.</p>
 					</div>
 				{/if}
@@ -613,13 +683,11 @@
 
 			<!-- Past History (Collapsible) -->
 			{#if pastBookings.length > 0}
-				<Separator />
-
 				<section class="space-y-3">
 					<button
 						type="button"
 						onclick={() => (showPast = !showPast)}
-						class="flex w-full items-center justify-between text-sm font-semibold hover:text-foreground transition-colors text-muted-foreground"
+						class="flex w-full items-center justify-between text-sm font-semibold text-muted-foreground hover:text-foreground transition-colors"
 					>
 						<span>
 							History
@@ -646,18 +714,18 @@
 											<div class="min-w-0 flex-1 space-y-0.5">
 												<div class="flex items-center gap-2">
 													<p class="text-sm font-medium truncate">
-														{booking.client_name || 'Past Client'}
+														{booking.client_name || 'Past client'}
 													</p>
 													{#if booking.status === 'REJECTED'}
 														<span
-															class="inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[10px] font-medium bg-muted text-muted-foreground"
+															class="inline-flex shrink-0 items-center rounded-md px-1.5 py-0.5 text-[10px] font-medium bg-muted text-muted-foreground"
 														>
 															Rejected
 														</span>
 													{/if}
 												</div>
 												<p class="text-xs text-muted-foreground">
-													{fmtDate(booking.event_date)}
+													{fmtDateShort(booking.event_date)}
 													{#if booking.packages?.name}
 														&middot; {booking.packages.name}
 													{/if}
@@ -670,9 +738,10 @@
 												<a
 													href={`/api/calendar/${booking.id}?token=${accessToken}`}
 													target="_blank"
-													class="inline-flex h-7 items-center rounded-md border border-border bg-background px-2 text-[11px] font-medium hover:bg-muted transition-colors"
+													aria-label="Add to calendar"
+													class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted transition-colors"
 												>
-													.ics
+													<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
 												</a>
 											</div>
 										</div>

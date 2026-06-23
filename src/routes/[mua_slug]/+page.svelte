@@ -6,11 +6,24 @@
 	import { Button } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
 	import { Separator } from '$lib/components/ui/separator';
+	import { Label } from '$lib/components/ui/label';
 
 	let { data } = $props();
 
 	let targetDate = $state('');
 	let availabilityStatus = $state<'FREE' | 'BOOKED' | ''>('');
+
+	// --- Named constants ---
+	const COOLDOWN_MS = 3000;
+	const DEBOUNCE_MS = 300;
+	const BLUR_TIMEOUT_MS = 200;
+
+	// Mapbox suggestion shape (abbreviated from the API response)
+	interface MapboxSuggestion {
+		place_name: string;
+		text: string;
+		center: [number, number];
+	}
 
 	// --- 1. Client-Side Travel Estimator State ---
 	let clientVenueQuery = $state('');
@@ -21,12 +34,12 @@
 	let estimatedTravelFee = $state<number | null>(null);
 	let resolvedVenueName = $state('');
 
-	let suggestions = $state<any[]>([]);
-    let showSuggestions = $state(false);
-    let searchTimeout: ReturnType<typeof setTimeout>;
+	let suggestions = $state<MapboxSuggestion[]>([]);
+	let showSuggestions = $state(false);
+	let searchTimeout: ReturnType<typeof setTimeout>;
 
 	// Local session cache to save Mapbox API calls (zero-cost lookups)
-	const publicMapboxCache = new Map<string, { distanceKm: number; computedFee: number; venueName: string }>();
+	const publicMapboxCache = new Map<string, { distanceKm: number | null; computedFee: number | null; venueName: string }>();
 
 	// --- 2. Leaflet Map Initialization ---
 	onMount(async () => {
@@ -96,11 +109,11 @@
 
 		calculatingTravel = true;
 		cooldownActive = true;
-		toast.loading('Analyzing driving distance...');
+		const loadingToastId = toast.loading('Checking the route to your venue…');
 
 		setTimeout(() => {
 			cooldownActive = false;
-		}, 3000);
+		}, COOLDOWN_MS);
 
 		try {
 			// Fetch our secure, server-side API proxy (no tokens visible in client networks!)
@@ -116,7 +129,7 @@
 			});
 
 			const result = await response.json();
-			toast.dismiss();
+			toast.dismiss(loadingToastId);
 
 			if (!result.success) {
 				toast.error(result.error || 'Failed to analyze location.');
@@ -135,9 +148,9 @@
 				venueName: resolvedVenueName
 			});
 
-			toast.success('Calculation finished!');
+			toast.success('Travel estimate ready');
 		} catch (err: any) {
-			toast.dismiss();
+			toast.dismiss(loadingToastId);
 			console.error(err);
 			toast.error('Failed to calculate travel fee.');
 		} finally {
@@ -168,11 +181,12 @@
                 }
             } catch (err) {
                 console.error('Autocomplete error:', err);
+                toast.error('Could not load location suggestions.');
             }
-        }, 300);
+        }, DEBOUNCE_MS);
     }
 
-    function selectSuggestion(sugg: any) {
+    function selectSuggestion(sugg: MapboxSuggestion) {
         clientVenueQuery = sugg.place_name;
         resolvedVenueName = sugg.text;
         showSuggestions = false;
@@ -184,7 +198,7 @@
 
     // Close suggestions when clicking outside
     function closeSuggestions() {
-        setTimeout(() => { showSuggestions = false; }, 200);
+        setTimeout(() => { showSuggestions = false; }, BLUR_TIMEOUT_MS);
     }
 
 	// Calendar logic
@@ -269,12 +283,21 @@
 	});
 </script>
 
+{#snippet whatsappIcon()}
+	<svg class="h-4 w-4" fill="currentColor" viewBox="0 0 24 24">
+		<path
+			d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"
+		/>
+	</svg>
+{/snippet}
+
 <div class="bg-background flex min-h-screen flex-col items-center px-4 py-8 sm:py-12">
-	<div class="animate-in-up w-full max-w-md space-y-6">
+	<div class="w-full max-w-md space-y-6">
 		<!-- Studio Branding -->
-		<div class="space-y-4 text-center">
+		<div class="animate-in-up space-y-4 text-center" style="--i: 0">
 			<div
 				class="bg-foreground text-background mx-auto flex h-16 w-16 items-center justify-center rounded-full text-2xl font-semibold"
+				aria-label={`${data.studioName} studio initial`}
 			>
 				{data.studioName.charAt(0)}
 			</div>
@@ -285,7 +308,7 @@
 		</div>
 
 		<!-- Availability Checker -->
-		<Card.Root>
+		<Card.Root class="animate-in-up" style="--i: 1">
 			<Card.Header>
 				<Card.Title>Check date availability</Card.Title>
 				<Card.Description>See if your event date is open before reaching out.</Card.Description>
@@ -297,7 +320,8 @@
 					<button
 						type="button"
 						onclick={() => navigateMonth(-1)}
-						class="hover:bg-muted flex min-h-11 min-w-11 items-center justify-center rounded-md transition-colors"
+						class="hover:bg-muted focus-visible:ring-ring flex min-h-11 min-w-11 items-center justify-center rounded-md transition-colors focus-visible:ring-2 focus-visible:ring-offset-1"
+						aria-label="Previous month"
 					>
 							<svg
 								class="h-4 w-4"
@@ -317,7 +341,8 @@
 					<button
 						type="button"
 						onclick={() => navigateMonth(1)}
-						class="hover:bg-muted flex min-h-11 min-w-11 items-center justify-center rounded-md transition-colors"
+						class="hover:bg-muted focus-visible:ring-ring flex min-h-11 min-w-11 items-center justify-center rounded-md transition-colors focus-visible:ring-2 focus-visible:ring-offset-1"
+						aria-label="Next month"
 					>
 							<svg
 								class="h-4 w-4"
@@ -354,7 +379,7 @@
 											type="button"
 											onclick={() => selectDay(day)}
 											disabled={isPast(day)}
-											class="relative flex min-h-11 min-w-11 items-center justify-center rounded-md text-sm transition-colors
+											class="relative flex min-h-11 min-w-11 items-center justify-center rounded-md text-sm transition-colors focus-visible:ring-ring focus-visible:ring-2 focus-visible:ring-offset-1
 												{isSelected(day)
 												? 'bg-primary text-primary-foreground font-semibold'
 												: isPast(day)
@@ -378,7 +403,7 @@
 				<!-- Selected date display -->
 				{#if targetDate}
 					<div class="flex items-center justify-center gap-2 py-1">
-						<svg
+						<!-- <svg
 							class="text-primary h-3.5 w-3.5"
 							fill="none"
 							viewBox="0 0 24 24"
@@ -386,7 +411,7 @@
 							stroke-width="2"
 						>
 							<path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5" />
-						</svg>
+						</svg> -->
 						<p class="text-sm font-medium">{fmtDate(targetDate)}</p>
 					</div>
 				{/if}
@@ -437,20 +462,23 @@
 
 				<Separator />
 
-				<Button class="w-full gap-2" onclick={() => window.open(whatsappInquiryUrl, '_blank')}>
-					<svg class="h-4 w-4" fill="currentColor" viewBox="0 0 24 24">
-						<path
-							d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"
-						/>
-					</svg>
-					Inquire via WhatsApp
-				</Button>
+				{#if data.whatsappNumber}
+					<Button class="w-full gap-2" onclick={() => window.open(whatsappInquiryUrl, '_blank')}>
+						{@render whatsappIcon()}
+						Inquire via WhatsApp
+					</Button>
+				{:else}
+					<Button class="w-full gap-2" disabled>
+						{@render whatsappIcon()}
+						Contact not configured
+					</Button>
+				{/if}
 			</Card.Content>
 		</Card.Root>
 
-		<!-- NEW: Interactive Travel Surcharge Calculator (Only if coordinates & rate are set) -->
+		<!-- Interactive Travel Surcharge Calculator (only if coordinates & rate are set) -->
 		{#if data.baseLat && data.baseLng && data.ratePerKm > 0}
-			<Card.Root class="relative {showSuggestions ? 'z-50' : 'z-20'} overflow-visible">
+			<Card.Root class="animate-in-up relative {showSuggestions ? 'z-50' : 'z-20'} overflow-visible" style="--i: 2">
 				<Card.Header>
 					<Card.Title>Estimate travel surcharge</Card.Title>
 					<Card.Description>Calculate road travel cost from our studio to your area.</Card.Description>
@@ -458,6 +486,7 @@
 				<Card.Content class="space-y-4 overflow-visible">
 					<div class="flex gap-2">
 						<div class="relative w-full">
+							<Label for="venue-search" class="sr-only">Event venue or area</Label>
 							<Input
 								id="venue-search"
 								placeholder="Type area name..."
@@ -474,7 +503,7 @@
 											<li>
 												<button
 													type="button"
-													class="w-full rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent hover:text-accent-foreground"
+													class="w-full rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent hover:text-accent-foreground focus-visible:ring-ring focus-visible:ring-2 focus-visible:ring-offset-1"
 													onclick={() => selectSuggestion(sugg)}
 												>
 													<p class="font-medium">{sugg.text}</p>
@@ -493,12 +522,19 @@
 							disabled={calculatingTravel || !clientVenueQuery}
 							class="shrink-0"
 						>
-							{calculatingTravel ? '...' : 'Estimate'}
+							{#if calculatingTravel}
+								<svg class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
+									<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+									<path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+								</svg>
+							{:else}
+								Estimate
+							{/if}
 						</Button>
 					</div>
 
 					{#if estimatedTravelFee !== null && estimatedDistance !== null}
-						<div class="border-primary/20 bg-primary/5 space-y-1 rounded-lg border p-4 text-center">
+						<div class="animate-reveal border-primary/20 bg-primary/5 space-y-1 rounded-lg border p-4 text-center">
 							<p class="text-primary text-sm font-semibold">
 								Estimated travel surcharge: {fmtCurrency(estimatedTravelFee)}
 							</p>
@@ -513,17 +549,17 @@
 
 		<!-- Interactive Leaflet Map (100% Free & Zero Key cost) -->
 		{#if data.baseLat && data.baseLng}
-			<Card.Root class="overflow-hidden">
+			<Card.Root class="animate-in-up overflow-hidden" style="--i: 3">
 				<Card.Header class="pb-3">
 					<Card.Title>Our studio base area</Card.Title>
 					<Card.Description>We operate and travel outwards from this base location.</Card.Description>
 				</Card.Header>
-				<div id="map-container" class="h-72 w-full border-t border-border"></div>
+				<div id="map-container" class="h-72 w-full border-t border-border opacity-0 transition-opacity duration-300" style:--map-loaded="0"></div>
 			</Card.Root>
 		{/if}
 
 		<!-- Service Packages -->
-		<Card.Root>
+		<Card.Root class="animate-in-up" style="--i: 4">
 			<Card.Header>
 				<Card.Title>Service packages</Card.Title>
 				<Card.Description>Available services and pricing.</Card.Description>
@@ -560,6 +596,53 @@
 </div>
 
 <style>
+	/* Staggered card entrance — delay increases per card index */
+	.animate-in-up {
+		animation: in-up 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+		animation-delay: calc(var(--i, 0) * 75ms);
+	}
+
+	@keyframes in-up {
+		from {
+			opacity: 0;
+			transform: translateY(8px);
+		}
+		to {
+			opacity: 1;
+			transform: translateY(0);
+		}
+	}
+
+	/* Travel result reveal — fade + slight slide */
+	.animate-reveal {
+		animation: reveal 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+	}
+
+	@keyframes reveal {
+		from {
+			opacity: 0;
+			transform: translateY(4px);
+		}
+		to {
+			opacity: 1;
+			transform: translateY(0);
+		}
+	}
+
+	/* Respect reduced motion — disable entrance/reveal animations */
+	@media (prefers-reduced-motion: reduce) {
+		.animate-in-up,
+		.animate-reveal {
+			animation: none;
+			opacity: 1;
+		}
+	}
+
+	/* Map container fades in after Leaflet initialises */
+	#map-container:global(.leaflet-container) {
+		opacity: 1 !important;
+	}
+
 :global(.leaflet-control-zoom) {
 		border: none !important;
 		border-radius: 8px !important;

@@ -10,6 +10,7 @@
 
 	let loading = $state(true);
 	let authenticated = $state(false);
+	let studioName = $state('');
 
 	$effect(() => {
 		if (session) {
@@ -19,6 +20,20 @@
 			authenticated = false;
 			loading = false;
 			goto('/login');
+		}
+	});
+
+	$effect(() => {
+		if (session?.user?.id && supabase) {
+			supabase
+				.from('mua_configs')
+				.select('studio_name')
+				.eq('mua_id', session.user.id)
+				.single()
+				// eslint-disable-next-line @typescript-eslint/no-explicit-any
+				.then((res: { data: any }) => {
+					if (res.data?.studio_name) studioName = res.data.studio_name;
+				});
 		}
 	});
 

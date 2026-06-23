@@ -24,7 +24,8 @@
 			return;
 		}
 
-		const { data: { subscription } } = supabase.auth.onAuthStateChange((_, currentSession) => {
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		const { data: { subscription } } = supabase.auth.onAuthStateChange((_: any, currentSession: any) => {
 			if (currentSession) goto('/bookings');
 		});
 
@@ -99,7 +100,7 @@
 					<form onsubmit={handleMagicLink} class="space-y-4">
 					<FieldGroup class="gap-4">
 						<Field class="gap-2">
-							<FieldLabel htmlFor="email">Email address</FieldLabel>
+							<FieldLabel>Email address</FieldLabel>
 							<Input
 								id="email"
 								type="email"

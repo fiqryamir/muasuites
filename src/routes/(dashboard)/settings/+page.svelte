@@ -314,7 +314,7 @@
 				<form onsubmit={handleSaveConfig} class="space-y-6">
 					<!-- Booking Link -->
 					<Field class="gap-2">
-						<FieldLabel htmlFor="slug">Custom booking link</FieldLabel>
+						<FieldLabel>Custom booking link</FieldLabel>
 						<InputGroup class="rounded-full bg-muted border-none overflow-hidden">
 							<InputGroupAddon class="pl-4">
 								<InputGroupText class="text-muted-foreground text-sm">muasuites.com/</InputGroupText>
@@ -334,7 +334,7 @@
 					<!-- Contact Details -->
 					<FieldGroup class="grid gap-4 sm:grid-cols-2">
 						<Field class="gap-2">
-							<FieldLabel htmlFor="studio_name">Studio name</FieldLabel>
+							<FieldLabel>Studio name</FieldLabel>
 							<Input
 								id="studio_name"
 								bind:value={studioName}
@@ -344,7 +344,7 @@
 							/>
 						</Field>
 						<Field class="gap-2">
-							<FieldLabel htmlFor="whatsapp">WhatsApp number</FieldLabel>
+							<FieldLabel>WhatsApp number</FieldLabel>
 							<InputGroup class="rounded-full bg-muted border-none overflow-hidden">
 								<InputGroupAddon class="pl-4">
 									<InputGroupText class="text-muted-foreground text-sm">+60</InputGroupText>
@@ -364,7 +364,7 @@
 		
 					<!-- Telegram Notifications -->
 					<Field class="gap-2">
-							<FieldLabel htmlFor="telegram">Telegram notifications</FieldLabel>
+							<FieldLabel>Telegram notifications</FieldLabel>
 						<div class="flex gap-2">
 							<Input
 								id="telegram"
@@ -393,7 +393,7 @@
 					<div class="space-y-4">
 						<FieldGroup class="grid gap-4 sm:grid-cols-2">
 							<Field class="gap-2">
-								<FieldLabel htmlFor="deposit_mode">Deposit type</FieldLabel>
+								<FieldLabel>Deposit type</FieldLabel>
 								<Select.Root type="single" bind:value={depositMode}>
 									<Select.Trigger 
 										id="deposit_mode" 
@@ -410,7 +410,7 @@
 							</Field>
 		
 							<Field class="gap-2">
-								<FieldLabel htmlFor="deposit_value">
+								<FieldLabel>
 									{depositMode === 'FIXED' ? 'Deposit amount' : 'Deposit percentage'}
 								</FieldLabel>
 								<InputGroup class="rounded-full bg-muted border-none overflow-hidden">
@@ -437,7 +437,7 @@
 						</FieldGroup>
 		
 						<Field class="gap-2">
-							<FieldLabel htmlFor="qr_code">DuitNow QR code</FieldLabel>
+							<FieldLabel>DuitNow QR code</FieldLabel>
 							<Input
 								id="qr_code"
 								type="file"
@@ -512,15 +512,15 @@
 					<h4 class="text-sm font-semibold">Add new package</h4>
 					<form onsubmit={handleAddPackage} class="grid gap-4 sm:grid-cols-[5rem_1fr_8rem]">
 						<Field class="gap-2">
-							<FieldLabel htmlFor="pkg-emoji">Icon</FieldLabel>
+							<FieldLabel>Icon</FieldLabel>
 							<Input id="pkg-emoji" bind:value={pkgEmoji} required class="text-center rounded-full bg-muted border-none" />
 						</Field>
 						<Field class="gap-2">
-							<FieldLabel htmlFor="pkg-name">Package name</FieldLabel>
+							<FieldLabel>Package name</FieldLabel>
 							<Input id="pkg-name" bind:value={pkgName} required placeholder="e.g., Nikah Full Glam" class="rounded-full bg-muted border-none px-4" />
 						</Field>
 						<Field class="gap-2">
-							<FieldLabel htmlFor="pkg-price">Price (RM)</FieldLabel>
+							<FieldLabel>Price (RM)</FieldLabel>
 							<Input id="pkg-price" type="number" step="0.01" bind:value={pkgPrice} required placeholder="800.00" class="rounded-full bg-muted border-none px-4" />
 						</Field>
 						<div class="flex justify-end sm:col-span-3">

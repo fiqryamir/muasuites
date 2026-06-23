@@ -570,7 +570,7 @@
 								<Separator />
 
 								<Field class="gap-2">
-									<FieldLabel htmlFor="address">Venue address</FieldLabel>
+									<FieldLabel>Venue address</FieldLabel>
 									<Input
 										id="address"
 										placeholder="e.g., Grand Hyatt KL, Shah Alam residence"
@@ -601,7 +601,7 @@
 								</p>
 
 								<Field class="gap-2">
-									<FieldLabel htmlFor="name">Full name</FieldLabel>
+									<FieldLabel>Full name</FieldLabel>
 									<Input
 										id="name"
 										placeholder="Your full name"
@@ -615,7 +615,7 @@
 								</Field>
 
 								<Field class="gap-2">
-									<FieldLabel htmlFor="phone">WhatsApp number</FieldLabel>
+									<FieldLabel>WhatsApp number</FieldLabel>
 									<InputGroup class="bg-muted overflow-hidden rounded-full border-none">
 										<InputGroupAddon class="pl-4">
 											<InputGroupText class="text-muted-foreground text-sm">+60</InputGroupText>
@@ -835,7 +835,7 @@
 							<input type="hidden" name="booking_id" value={bookingId} />
 							<input type="hidden" name="invite_id" value={data.invite?.id} />
 							<Field class="gap-2">
-								<FieldLabel htmlFor="receipt">Payment receipt</FieldLabel>
+								<FieldLabel>Payment receipt</FieldLabel>
 								<Input 
 									id="receipt" 
 									name="receipt" 
