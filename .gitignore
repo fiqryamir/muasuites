@@ -26,5 +26,6 @@ vite.config.ts.timestamp-*
 .clinerules
 
 reports
+rpc
 
 .impeccable
