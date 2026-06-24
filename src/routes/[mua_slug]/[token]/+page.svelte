@@ -240,17 +240,16 @@
 	}
 
 	// Timer
-	let secondsRemaining = $state(600);
+	let secondsRemaining = $state(data.checkoutResume?.secondsRemaining ?? 600);
 	let timerIntervalId: any = null;
 
 	let timerString = $derived(
 		`${Math.floor(secondsRemaining / 60)}:${(secondsRemaining % 60).toString().padStart(2, '0')}`
 	);
 	let timerPercent = $derived((secondsRemaining / 600) * 100);
-
 	let securing = $state(false);
 	let submitting = $state(false);
-	let bookingId = $state('');
+	let bookingId = $state(data.checkoutResume?.bookingId ?? '');
 
 	// Time conflict detection — checks selected time against occupied slots
 	let isTimeConflicting = $derived.by(() => {
@@ -305,6 +304,18 @@
 
 	let balanceAmount = $derived(totalAmount - depositAmount);
 
+	// On page load, resume CHECKING_OUT state from server data
+	let hasHydrated = $state(false);
+	$effect(() => {
+		if (data.checkoutResume && !hasHydrated) {
+			hasHydrated = true;
+			bookingId = data.checkoutResume.bookingId;
+			secondsRemaining = data.checkoutResume.secondsRemaining;
+			checkoutState = 'B';
+			startTimer();
+		}
+	});
+
 	$effect(() => {
 		if (form?.success && form?.bookingId) {
 			bookingId = form.bookingId;
@@ -327,7 +338,7 @@
 			} else {
 				clearInterval(timerIntervalId);
 				if (checkoutState === 'B') {
-					toast.error('Your slot reservation has expired.');
+					toast.error("Time's up — your slot was released. You can start again if you'd like to book.");
 					setTimeout(() => window.location.reload(), 1500);
 				}
 			}
@@ -339,10 +350,10 @@
 	});
 </script>
 
-<div class="bg-background flex min-h-screen flex-col items-center justify-center px-4 py-8">
+<div class="bg-background flex min-h-screen flex-col items-center justify-center px-4 py-8 motion-safe:animate-in-up">
 	<!-- Gate: Expired / Used -->
-	{#if data.gateState === 'USED' || data.gateState === 'EXPIRED'}
-		<div class="animate-in-up w-full max-w-sm space-y-6 text-center">
+		{#if data.gateState === 'USED' || data.gateState === 'EXPIRED'}
+		<div class="motion-safe:animate-in-up w-full max-w-sm space-y-6 text-center">
 			<div class="bg-muted mx-auto flex h-14 w-14 items-center justify-center rounded-full">
 				<svg
 					class="text-muted-foreground h-6 w-6"
@@ -369,7 +380,7 @@
 
 		<!-- Gate: Capacity Paused -->
 	{:else if data.gateState === 'CAPACITY_PAUSED'}
-		<div class="animate-in-up w-full max-w-sm space-y-6 text-center">
+		<div class="motion-safe:animate-in-up w-full max-w-sm space-y-6 text-center">
 			<div class="bg-muted mx-auto flex h-14 w-14 items-center justify-center rounded-full">
 				<svg
 					class="text-muted-foreground h-6 w-6"
@@ -396,7 +407,7 @@
 		<!-- Active Flow -->
 	{:else if data.gateState === 'ACTIVE'}
 		{#if checkoutState === 'A'}
-			<div class="animate-in-up w-full max-w-md">
+			<div class="motion-safe:animate-in-up w-full max-w-md">
 				<!-- Studio name header -->
 				<div class="mb-6 space-y-1 text-center">
 					<p class="text-xs font-medium text-muted-foreground">
@@ -408,9 +419,12 @@
 				<Card.Root>
 					<!-- Step indicator -->
 					<Card.Header class="pb-4 text-center">
-						<div class="mb-3 flex items-center justify-center gap-1.5">
+						<div class="mb-3 flex items-center justify-center gap-1.5" role="tablist" aria-label="Booking steps">
 							{#each [1, 2, 3, 4, 5] as step}
 								<div
+									role="tab"
+									aria-current={step === currentStep ? 'step' : undefined}
+									aria-label="Step {step}: {step === 1 ? 'Choose date' : step === 2 ? 'Select package' : step === 3 ? 'Time and venue' : step === 4 ? 'Your details' : 'Review and confirm'}"
 									class="h-1.5 rounded-full transition-all duration-300 {step < currentStep
 										? 'bg-primary w-4'
 										: step === currentStep
@@ -499,7 +513,7 @@
 															type="button"
 															onclick={() => selectDay(day)}
 															disabled={isPast(day)}
-															class="relative flex min-h-11 min-w-11 items-center justify-center rounded-md text-sm transition-colors
+															class="focus-visible:ring-ring relative flex min-h-11 min-w-11 items-center justify-center rounded-md text-sm transition-colors focus-visible:ring-2 focus-visible:ring-offset-1
 																{isSelected(day)
 																? 'bg-primary text-primary-foreground font-semibold'
 																: isPast(day)
@@ -512,7 +526,7 @@
 														>
 															{day}
 															{#if slotCount > 0 && !isSelected(day) && !blackedOut}
-																<span class="absolute -top-0.5 -right-0.5 flex min-h-[14px] min-w-[14px] items-center justify-center rounded-full bg-primary/80 text-[9px] font-medium text-white leading-none px-1">
+																<span class="absolute -top-0.5 -right-0.5 flex min-h-[14px] min-w-[14px] items-center justify-center rounded-full bg-muted-foreground/60 text-[9px] font-medium text-white leading-none px-1">
 																	{slotCount}
 																</span>
 															{/if}
@@ -528,7 +542,7 @@
 								</div>
 
 								{#if selectedDate}
-									<div class="space-y-3">
+									<div aria-live="polite" class="space-y-3">
 										<div class="flex items-center justify-center gap-2 py-1">
 											<p class="text-sm font-medium">{fmtDate(selectedDate)}</p>
 										</div>
@@ -628,7 +642,7 @@
 						{:else if currentStep === 2}
 							<div class="space-y-3">
 								<p class="text-muted-foreground text-center text-sm">
-									Choose the service for your event.
+									What service do you need?
 								</p>
 								<div class="space-y-2">
 									{#each data.packages as pkg}
@@ -639,7 +653,7 @@
 												selectedPackage = pkg;
 												stepErrors = {};
 											}}
-											class="flex w-full items-center justify-between rounded-lg border p-4 text-left transition-all
+											class="focus-visible:ring-ring flex w-full items-center justify-between rounded-lg border p-4 text-left transition-all focus-visible:ring-2 focus-visible:ring-offset-1
 												{selected
 												? 'border-primary bg-primary/5 ring-primary ring-1'
 												: 'border-border hover:border-muted-foreground/30'}"
@@ -678,7 +692,7 @@
 						{:else if currentStep === 3}
 							<div class="space-y-4">
 								<Field class="gap-2">
-									<FieldLabel>Ready time</FieldLabel>
+									<FieldLabel>Event start time</FieldLabel>
 									<div class="flex items-center gap-2">
 										<div class="flex-1">
 											<Select.Root type="single" bind:value={selectedHour}>
@@ -724,7 +738,7 @@
 										</div>
 									</div>
 									<p class="text-muted-foreground px-2 text-[11px]">
-										Ready by <span class="text-foreground font-medium">{eventTimeDisplay}</span>
+										Starts at <span class="text-foreground font-medium">{eventTimeDisplay}</span>
 										{#if selectedPackage}
 											&middot; ends ~<span class="text-foreground font-medium">{slotEnd(eventTime, selectedPackage.duration_hours)}</span>
 											&middot; <span class="text-foreground font-medium">{fmtDuration(selectedPackage.duration_hours)}</span>
@@ -934,10 +948,10 @@
 									</div>
 								</div>
 
-								<div class="border-primary/20 bg-primary/5 space-y-1.5 rounded-lg border p-4">
+								<div class="border-border bg-muted/30 space-y-1.5 rounded-lg border p-4">
 									<div class="flex justify-between">
-										<p class="text-primary text-sm font-semibold">Deposit required</p>
-										<p class="text-primary text-sm font-bold tabular-nums">
+										<p class="text-foreground text-sm font-semibold">Deposit required</p>
+										<p class="text-foreground text-sm font-bold tabular-nums">
 											{fmtCurrency(depositAmount)}
 										</p>
 									</div>
@@ -986,14 +1000,17 @@
 
 			<!-- STATE B: Payment -->
 		{:else if checkoutState === 'B'}
-			<div class="animate-in-up w-full max-w-md space-y-6">
-				<div class="space-y-2">
-					<div class="flex items-center justify-between">
-						<p class="text-xs font-medium text-muted-foreground">
-							Reservation expires in
-						</p>
-						<p class="text-primary text-sm font-semibold tabular-nums">{timerString}</p>
-					</div>
+		{@const qrUrl = form?.bankConfig?.duitnow_qr_url || data.defaultConfig?.duitnow_qr_url}
+			{@const studioName = form?.bankConfig?.studio_name || data.defaultConfig?.studio_name}
+			{@const whatsapp = form?.bankConfig?.whatsapp_number || data.defaultConfig?.whatsapp_number}
+			<div class="motion-safe:animate-in-up w-full max-w-md space-y-6">
+			<div class="space-y-2">
+				<div class="flex items-center justify-between">
+					<p class="text-xs font-medium text-muted-foreground">
+						Reservation expires in
+					</p>
+					<p aria-live="polite" class="text-primary text-sm font-semibold tabular-nums">{timerString}</p>
+				</div>
 					<div class="bg-muted h-1 w-full overflow-hidden rounded-full">
 						<div
 							class="bg-primary h-full rounded-full transition-all duration-1000 ease-linear"
@@ -1014,17 +1031,20 @@
 					<Card.Content class="space-y-4">
 						<div class="border-border bg-muted/30 rounded-lg border p-4">
 							<p class="text-muted-foreground mb-1 text-xs">Bank</p>
-							<p class="text-sm font-medium">{form?.bankConfig?.studio_name}</p>
-							{#if form?.bankConfig?.duitnow_qr_url}
+							<!-- 👇 USE THE CONST VARIABLE HERE -->
+							<p class="text-sm font-medium">{studioName}</p>
+							
+							<!-- 👇 USE THE CONST VARIABLE HERE -->
+							{#if qrUrl}
 								<div class="border-border bg-card mt-4 flex justify-center rounded-lg border p-6">
 									<img
-										src={form.bankConfig.duitnow_qr_url}
+										src={qrUrl}
 										alt="DuitNow QR"
 										class="h-48 w-48 object-contain"
 									/>
 								</div>
 								<p class="text-muted-foreground mt-3 text-center text-xs">
-									Scan with your banking app to pay.
+									Open your banking app and scan to pay.
 								</p>
 							{:else}
 								<p class="text-muted-foreground mt-2 text-xs">
@@ -1067,10 +1087,10 @@
 									required 
 									class=""
 								/>
-								<p class="px-2 text-xs text-muted-foreground">Upload a screenshot of your transfer confirmation.</p>
+								<p class="px-2 text-xs text-muted-foreground">Upload a screenshot of your transfer confirmation. Max 5MB.</p>
 							</Field>
 							<Button type="submit" disabled={submitting} class="w-full">
-								{submitting ? 'Uploading...' : 'Submit receipt'}
+								{submitting ? 'Uploading...' : 'Upload receipt'}
 							</Button>
 						</form>
 					</Card.Content>
@@ -1079,7 +1099,7 @@
 
 			<!-- STATE C: Success -->
 		{:else if checkoutState === 'C'}
-			<div class="animate-in-up w-full max-w-sm space-y-6 text-center">
+			<div class="motion-safe:animate-in-up w-full max-w-sm space-y-6 text-center">
 				<div class="bg-primary/10 mx-auto flex h-14 w-14 items-center justify-center rounded-full">
 					<svg
 						class="text-primary h-7 w-7"

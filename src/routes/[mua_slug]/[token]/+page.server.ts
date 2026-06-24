@@ -47,13 +47,37 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 	// 5. Fetch Studio config details (needed before daySlots for buffer)
 	const { data: config } = await supabase
 		.from('mua_configs')
-		.select('studio_name, deposit_mode, deposit_value, working_hours_start, working_hours_end, default_buffer_minutes')
+		.select('studio_name, deposit_mode, duitnow_qr_url, whatsapp_number, deposit_value, working_hours_start, working_hours_end, default_buffer_minutes')
 		.eq('mua_id', muaId)
 		.single();
 
-	// 6. Query active bookings grouped by date as daySlots
+	// 6. Check if this invite has an active CHECKING_OUT booking (for timer resume)
 	const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
 
+	const { data: activeCheckout } = await supabase
+		.from('bookings')
+		.select('id, locked_at')
+		.eq('invite_id', invite.id)
+		.eq('status', 'CHECKING_OUT')
+		.gt('locked_at', tenMinutesAgo)
+		.single();
+
+	let checkoutResume: {
+		bookingId: string;
+		secondsRemaining: number;
+	} | null = null;
+
+	if (activeCheckout) {
+		const lockedAt = new Date(activeCheckout.locked_at).getTime();
+		const elapsed = Math.floor((Date.now() - lockedAt) / 1000);
+		const remaining = Math.max(600 - elapsed, 0);
+		checkoutResume = {
+			bookingId: activeCheckout.id,
+			secondsRemaining: remaining
+		};
+	}
+
+	// 7. Query active bookings grouped by date as daySlots (skip this invite's CHECKING_OUT)
 	const { data: bookings } = await supabase
 		.from('bookings')
 		.select('event_date, event_time, status, locked_at, invite_id, client_name, packages!inner(name, emoji, duration_hours), invites!inner(buffer_minutes_override)')
@@ -117,7 +141,8 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 		defaultConfig: config,
 		workingHoursStart: config?.working_hours_start?.slice(0, 5) || '08:00',
 		workingHoursEnd: config?.working_hours_end?.slice(0, 5) || '18:00',
-		defaultBufferMinutes: config?.default_buffer_minutes ?? 0
+		defaultBufferMinutes: config?.default_buffer_minutes ?? 0,
+		checkoutResume
 	};
 };
 
