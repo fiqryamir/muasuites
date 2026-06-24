@@ -15,7 +15,7 @@
 	],
 	"kv_namespaces": [
 		{
-			"binding": "mua_cache",
+			"binding": "MUA_CACHE",
 			"id": "aea3acba8cde4bafa770fd720769c8af",
 			"remote": true
 		}
