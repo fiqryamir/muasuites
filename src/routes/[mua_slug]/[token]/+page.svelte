@@ -32,6 +32,32 @@
 	// Step errors
 	let stepErrors = $state<Record<string, string>>({});
 
+	// --- Time-slot helpers ---
+	function fmtTime(t: string) {
+		if (!t) return '';
+		const [h, m] = t.split(':');
+		const hr = parseInt(h);
+		const sfx = hr >= 12 ? 'PM' : 'AM';
+		const dh = hr > 12 ? hr - 12 : hr === 0 ? 12 : hr;
+		return `${dh}:${m} ${sfx}`;
+	}
+
+	function getSlotsForDate(dateStr: string): DaySlot[] {
+		return (data.daySlots as Record<string, DaySlot[]> | undefined)?.[dateStr] || [];
+	}
+
+	function getSlotCount(dateStr: string) {
+		return getSlotsForDate(dateStr).length;
+	}
+
+	function slotEnd(start: string, hours: number) {
+		const [h, m] = start.split(':').map(Number);
+		const totalMinutes = h * 60 + m + hours * 60;
+		const endH = Math.floor(totalMinutes / 60) % 24;
+		const endM = totalMinutes % 60;
+		return fmtTime(`${endH.toString().padStart(2, '0')}:${endM.toString().padStart(2, '0')}`);
+	}
+
 	// Time picker
 	let selectedHour = $state('08');
 	let selectedMinute = $state('00');
@@ -105,12 +131,16 @@
 
 	function selectDay(day: number) {
 		const key = dateKey(day);
-		if (data.disabledDates?.includes(key) || key < todayStr) {
+		if (isBlackout(key) || key < todayStr) {
 			toast.error('This date is unavailable.');
 			return;
 		}
 		selectedDate = key;
 		stepErrors = {};
+	}
+
+	function isBlackout(dateStr: string) {
+		return (data.blackoutDates as string[] | undefined)?.includes(dateStr) || false;
 	}
 
 	function isSelected(day: number) {
@@ -120,8 +150,12 @@
 		return dateKey(day) < todayStr;
 	}
 	function isOccupied(day: number) {
-		return data.disabledDates?.includes(dateKey(day)) || false;
+		return isBlackout(dateKey(day)) || false;
 	}
+
+	// Selected date slots for display
+	let selectedSlots = $derived(selectedDate ? getSlotsForDate(selectedDate) : []);
+	let selectedIsBlackout = $derived(selectedDate ? isBlackout(selectedDate) : false);
 
 	function fmtDate(d: string) {
 		return new Date(d + 'T00:00:00').toLocaleDateString('en-MY', {
@@ -359,7 +393,8 @@
 								<button
 														type="button"
 														onclick={() => navigateMonth(-1)}
-														class="hover:bg-muted flex min-h-11 min-w-11 items-center justify-center rounded-md transition-colors"
+														class="hover:bg-muted focus-visible:ring-ring flex min-h-11 min-w-11 items-center justify-center rounded-md transition-colors focus-visible:ring-2 focus-visible:ring-offset-1"
+														aria-label="Previous month"
 										>
 											<svg
 												class="h-4 w-4"
@@ -379,7 +414,8 @@
 								<button
 														type="button"
 														onclick={() => navigateMonth(1)}
-														class="hover:bg-muted flex min-h-11 min-w-11 items-center justify-center rounded-md transition-colors"
+														class="hover:bg-muted focus-visible:ring-ring flex min-h-11 min-w-11 items-center justify-center rounded-md transition-colors focus-visible:ring-2 focus-visible:ring-offset-1"
+														aria-label="Next month"
 										>
 											<svg
 												class="h-4 w-4"
@@ -400,7 +436,7 @@
 										<div class="mb-1 grid grid-cols-7">
 											{#each daysOfWeek as day}
 												<div
-													class="text-muted-foreground flex h-9 items-center justify-center text-[11px] font-medium"
+													class="text-muted-foreground flex h-8 items-center justify-center text-[11px] font-medium"
 												>
 													{day}
 												</div>
@@ -411,6 +447,9 @@
 												{#if day === null}
 													<div class="h-9"></div>
 												{:else}
+													{@const dateStr = dateKey(day)}
+													{@const slotCount = getSlotCount(dateStr)}
+													{@const blackedOut = isBlackout(dateStr)}
 													<div class="flex items-center justify-center">
 														<button
 															type="button"
@@ -421,14 +460,20 @@
 																? 'bg-primary text-primary-foreground font-semibold'
 																: isPast(day)
 																	? 'text-muted-foreground/30 cursor-not-allowed'
-																	: isOccupied(day)
+																	: blackedOut
 																		? 'text-muted-foreground bg-muted/50'
-																		: 'hover:bg-muted font-medium'}"
+																		: slotCount > 0
+																			? 'hover:bg-muted'
+																			: 'hover:bg-muted font-medium'}"
 														>
 															{day}
-															{#if isOccupied(day) && !isSelected(day)}
-																<span class="bg-primary/60 absolute bottom-0.5 h-1 w-1 rounded-full"
-																></span>
+															{#if slotCount > 0 && !isSelected(day) && !blackedOut}
+																<span class="absolute -top-0.5 -right-0.5 flex min-h-[14px] min-w-[14px] items-center justify-center rounded-full bg-primary/80 text-[9px] font-medium text-white leading-none px-1">
+																	{slotCount}
+																</span>
+															{/if}
+															{#if blackedOut && !isSelected(day)}
+																<span class="bg-destructive/60 absolute bottom-0.5 h-1 w-1 rounded-full"></span>
 															{/if}
 														</button>
 													</div>
@@ -439,21 +484,93 @@
 								</div>
 
 								{#if selectedDate}
-									<div class="flex items-center justify-center gap-2 py-1">
-										<svg
-											class="text-primary h-3.5 w-3.5"
-											fill="none"
-											viewBox="0 0 24 24"
-											stroke="currentColor"
-											stroke-width="2"
-										>
-											<path
-												stroke-linecap="round"
-												stroke-linejoin="round"
-												d="M4.5 12.75l6 6 9-13.5"
-											/>
-										</svg>
-										<p class="text-sm font-medium">{fmtDate(selectedDate)}</p>
+									<div class="space-y-3">
+										<div class="flex items-center justify-center gap-2 py-1">
+											<p class="text-sm font-medium">{fmtDate(selectedDate)}</p>
+										</div>
+
+										{#if selectedIsBlackout}
+											<div class="border-destructive/20 bg-destructive/5 space-y-1 rounded-lg border p-4">
+												<div class="flex items-center gap-2">
+													<svg
+														class="text-destructive h-4 w-4 shrink-0"
+														fill="none"
+														viewBox="0 0 24 24"
+														stroke="currentColor"
+														stroke-width="2"
+													>
+														<path
+															stroke-linecap="round"
+															stroke-linejoin="round"
+															d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z"
+														/>
+													</svg>
+													<p class="text-destructive text-sm font-medium">Date unavailable (blocked)</p>
+												</div>
+												<p class="text-muted-foreground pl-6 text-xs">
+													This date has been blocked by the MUA. Try a different date.
+												</p>
+											</div>
+										{:else}
+											<div class="flex items-center gap-2 px-1">
+												<span class="text-[11px] font-medium text-muted-foreground">{data.workingHoursStart}</span>
+												<div class="bg-muted/50 flex-1 h-1.5 rounded-full overflow-hidden relative">
+													<div class="absolute inset-0 grid grid-cols-12 gap-0.5 px-0.5">
+														{#each Array(12) as _, i}
+															<div class="bg-muted-foreground/10 h-full w-full rounded-full"></div>
+														{/each}
+													</div>
+												</div>
+												<span class="text-[11px] font-medium text-muted-foreground">{data.workingHoursEnd}</span>
+											</div>
+
+											{#if selectedSlots.length > 0}
+												<div class="space-y-2">
+													<p class="text-xs font-medium text-muted-foreground">
+														{selectedSlots.length} session{selectedSlots.length !== 1 ? 's' : ''} booked
+													</p>
+													{#each selectedSlots as slot}
+														<div class="border-border bg-muted/30 flex items-center gap-3 rounded-lg border p-3">
+															<div class="shrink-0 text-center">
+																<p class="text-xs font-semibold tabular-nums">
+																	{fmtTime(slot.time)}
+																</p>
+																<p class="text-[10px] text-muted-foreground">
+																	→ {slotEnd(slot.time, slot.durationHours)}
+																</p>
+															</div>
+															<div class="bg-muted-foreground/20 h-8 w-px"></div>
+															<div class="min-w-0 flex-1">
+																<p class="text-sm font-medium truncate">
+																	{slot.packageEmoji} {slot.packageName}
+																</p>
+																<p class="text-xs text-muted-foreground truncate">
+																	{slot.clientName}
+																</p>
+															</div>
+														</div>
+													{/each}
+												</div>
+											{:else}
+												<div class="border-primary/20 bg-primary/5 space-y-1 rounded-lg border p-4">
+													<div class="flex items-center gap-2">
+														<svg
+															class="text-primary h-4 w-4 shrink-0"
+															fill="none"
+															viewBox="0 0 24 24"
+															stroke="currentColor"
+															stroke-width="2"
+														>
+															<path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+														</svg>
+														<p class="text-primary text-sm font-medium">Available all day</p>
+													</div>
+													<p class="text-muted-foreground pl-6 text-xs">
+														No sessions booked yet. This date is open.
+													</p>
+												</div>
+											{/if}
+										{/if}
 									</div>
 								{/if}
 

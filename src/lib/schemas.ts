@@ -15,3 +15,12 @@ export const secureSlotSchema = z.object({
 	deposit_amount: z.coerce.number().nonnegative(),
 	balance_amount: z.coerce.number().nonnegative()
 });
+
+/** Schema for validating invite generator form fields */
+export const inviteGeneratorSchema = z.object({
+	transportOverride: z.coerce.number().nonnegative('Transport fee must be 0 or more.'),
+	customSurcharge: z.coerce.number().nonnegative('Surcharge must be 0 or more.'),
+	surchargeRemark: z.string().optional(),
+	depositValueOverride: z.coerce.number().positive('Must be greater than 0.').nullable().optional(),
+	bufferMinutesOverride: z.coerce.number().int().min(0, 'Buffer must be 0 or more.').max(120, 'Buffer cannot exceed 120 minutes.').nullable().optional()
+});

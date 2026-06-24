@@ -11,7 +11,7 @@
 	let { data } = $props();
 
 	let targetDate = $state('');
-	let availabilityStatus = $state<'FREE' | 'BOOKED' | ''>('');
+	let availabilityStatus = $state<'FREE' | 'BOOKED' | 'PARTIAL' | ''>('');
 
 	// --- Named constants ---
 	const COOLDOWN_MS = 3000;
@@ -240,11 +240,27 @@
 		return `${currentYear}-${(currentMonth + 1).toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`;
 	}
 
+	function getSlotsForDate(dateStr: string) {
+		return data.daySlots[dateStr] || [];
+	}
+
+	function getSlotCount(dateStr: string) {
+		return getSlotsForDate(dateStr).length;
+	}
+
 	function selectDay(day: number) {
 		const key = dateKey(day);
 		if (key < todayStr) return;
 		targetDate = key;
-		availabilityStatus = data.disabledDates.includes(key) ? 'BOOKED' : 'FREE';
+		const slotCount = getSlotCount(key);
+		const isBlackout = data.blackoutDates.includes(key);
+		if (isBlackout) {
+			availabilityStatus = 'BOOKED';
+		} else if (slotCount > 0) {
+			availabilityStatus = 'PARTIAL';
+		} else {
+			availabilityStatus = 'FREE';
+		}
 	}
 
 	function isSelected(day: number) {
@@ -253,8 +269,17 @@
 	function isPast(day: number) {
 		return dateKey(day) < todayStr;
 	}
-	function isOccupied(day: number) {
-		return data.disabledDates.includes(dateKey(day));
+	function isBlackout(day: number) {
+		return data.blackoutDates.includes(dateKey(day));
+	}
+
+	function fmtTime(t: string) {
+		if (!t) return '';
+		const [h, m] = t.split(':');
+		const hr = parseInt(h);
+		const sfx = hr >= 12 ? 'PM' : 'AM';
+		const dh = hr > 12 ? hr - 12 : hr === 0 ? 12 : hr;
+		return `${dh}:${m} ${sfx}`;
 	}
 
 	function fmtDate(d: string) {
@@ -269,6 +294,19 @@
 	function fmtCurrency(price: number | string) {
 		return `RM ${Number(price).toLocaleString('en-MY', { minimumFractionDigits: 2 })}`;
 	}
+
+	// Compute end time from start + duration
+	function slotEnd(start: string, hours: number) {
+		const [h, m] = start.split(':').map(Number);
+		const totalMinutes = h * 60 + m + hours * 60;
+		const endH = Math.floor(totalMinutes / 60) % 24;
+		const endM = totalMinutes % 60;
+		return fmtTime(`${endH.toString().padStart(2, '0')}:${endM.toString().padStart(2, '0')}`);
+	}
+
+	// Selected date slots for display
+	let selectedSlots = $derived(targetDate ? getSlotsForDate(targetDate) : []);
+	let selectedIsBlackout = $derived(targetDate ? data.blackoutDates.includes(targetDate) : false);
 
 	// Dynamically appends dates, venue destination, and calculated travel fees to the WhatsApp lead link!
 	let whatsappInquiryUrl = $derived.by(() => {
@@ -311,7 +349,9 @@
 		<Card.Root class="animate-in-up" style="--i: 1">
 			<Card.Header>
 				<Card.Title>Check date availability</Card.Title>
-				<Card.Description>See if your event date is open before reaching out.</Card.Description>
+				<Card.Description>
+					{data.workingHoursStart} – {data.workingHoursEnd} daily · See booked time slots before reaching out.
+				</Card.Description>
 			</Card.Header>
 			<Card.Content class="space-y-4">
 				<!-- Calendar -->
@@ -374,6 +414,9 @@
 								{#if day === null}
 									<div class="h-9"></div>
 								{:else}
+									{@const dateStr = dateKey(day)}
+									{@const slotCount = getSlotCount(dateStr)}
+									{@const blackedOut = isBlackout(day)}
 									<div class="flex items-center justify-center">
 										<button
 											type="button"
@@ -384,13 +427,22 @@
 												? 'bg-primary text-primary-foreground font-semibold'
 												: isPast(day)
 													? 'text-muted-foreground/30 cursor-not-allowed'
-													: isOccupied(day)
+													: blackedOut
 														? 'text-muted-foreground bg-muted/50'
-														: 'hover:bg-muted font-medium'}"
+														: slotCount > 0
+															? 'hover:bg-muted'
+															: 'hover:bg-muted font-medium'}"
 										>
 											{day}
-											{#if isOccupied(day) && !isSelected(day)}
-												<span class="bg-primary/60 absolute bottom-0.5 h-1 w-1 rounded-full"></span>
+											<!-- Slot count badge -->
+											{#if slotCount > 0 && !isSelected(day) && !blackedOut}
+												<span class="absolute -top-0.5 -right-0.5 flex min-h-[14px] min-w-[14px] items-center justify-center rounded-full bg-primary/80 text-[9px] font-medium text-white leading-none px-1">
+													{slotCount}
+												</span>
+											{/if}
+											<!-- Blackout dot -->
+											{#if blackedOut && !isSelected(day)}
+												<span class="bg-destructive/60 absolute bottom-0.5 h-1 w-1 rounded-full"></span>
 											{/if}
 										</button>
 									</div>
@@ -400,63 +452,98 @@
 					</div>
 				</div>
 
-				<!-- Selected date display -->
+				<!-- Selected date display + timeline -->
 				{#if targetDate}
-					<div class="flex items-center justify-center gap-2 py-1">
-						<!-- <svg
-							class="text-primary h-3.5 w-3.5"
-							fill="none"
-							viewBox="0 0 24 24"
-							stroke="currentColor"
-							stroke-width="2"
-						>
-							<path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5" />
-						</svg> -->
-						<p class="text-sm font-medium">{fmtDate(targetDate)}</p>
-					</div>
-				{/if}
+					<div class="space-y-3">
+						<div class="flex items-center justify-center gap-2">
+							<p class="text-sm font-medium">{fmtDate(targetDate)}</p>
+						</div>
 
-				<!-- Availability result -->
-				{#if availabilityStatus === 'FREE'}
-					<div class="border-primary/20 bg-primary/5 space-y-1 rounded-lg border p-4">
-						<div class="flex items-center gap-2">
-							<svg
-								class="text-primary h-4 w-4 shrink-0"
-								fill="none"
-								viewBox="0 0 24 24"
-								stroke="currentColor"
-								stroke-width="2"
-							>
-								<path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5" />
-							</svg>
-							<p class="text-primary text-sm font-medium">Available on this date</p>
-						</div>
-						<p class="text-muted-foreground pl-6 text-xs">
-							Message us on WhatsApp to receive your custom booking link.
-						</p>
-					</div>
-				{:else if availabilityStatus === 'BOOKED'}
-					<div class="border-destructive/20 bg-destructive/5 space-y-1 rounded-lg border p-4">
-						<div class="flex items-center gap-2">
-							<svg
-								class="text-destructive h-4 w-4 shrink-0"
-								fill="none"
-								viewBox="0 0 24 24"
-								stroke="currentColor"
-								stroke-width="2"
-							>
-								<path
-									stroke-linecap="round"
-									stroke-linejoin="round"
-									d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z"
-								/>
-							</svg>
-							<p class="text-destructive text-sm font-medium">Date fully booked</p>
-						</div>
-						<p class="text-muted-foreground pl-6 text-xs">
-							An active reservation holds this date. Try another date or reach out for waitlist
-							options.
-						</p>
+						<!-- Timeline of booked slots -->
+						{#if selectedIsBlackout}
+							<div class="border-destructive/20 bg-destructive/5 space-y-1 rounded-lg border p-4">
+								<div class="flex items-center gap-2">
+									<svg
+										class="text-destructive h-4 w-4 shrink-0"
+										fill="none"
+										viewBox="0 0 24 24"
+										stroke="currentColor"
+										stroke-width="2"
+									>
+										<path
+											stroke-linecap="round"
+											stroke-linejoin="round"
+											d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z"
+										/>
+									</svg>
+									<p class="text-destructive text-sm font-medium">Date unavailable (blocked)</p>
+								</div>
+								<p class="text-muted-foreground pl-6 text-xs">
+									This date has been blocked by the MUA. Try a different date.
+								</p>
+							</div>
+						{:else}
+							<!-- Working hours bar -->
+							<div class="flex items-center gap-2 px-1">
+								<span class="text-[11px] font-medium text-muted-foreground">{data.workingHoursStart}</span>
+								<div class="bg-muted/50 flex-1 h-1.5 rounded-full overflow-hidden relative">
+									<div class="absolute inset-0 grid grid-cols-12 gap-0.5 px-0.5">
+										{#each Array(12) as _, i}
+											<div class="bg-muted-foreground/10 h-full w-full rounded-full"></div>
+										{/each}
+									</div>
+								</div>
+								<span class="text-[11px] font-medium text-muted-foreground">{data.workingHoursEnd}</span>
+							</div>
+
+							<!-- Booked sessions list -->
+							{#if selectedSlots.length > 0}
+								<div class="space-y-2">
+									<p class="text-xs font-medium text-muted-foreground">
+										{selectedSlots.length} session{selectedSlots.length !== 1 ? 's' : ''} booked
+									</p>
+									{#each selectedSlots as slot}
+										<div class="border-border bg-muted/30 flex items-center gap-3 rounded-lg border p-3">
+											<div class="shrink-0 text-center">
+												<p class="text-xs font-semibold tabular-nums">
+													{fmtTime(slot.time)}
+												</p>
+												<p class="text-[10px] text-muted-foreground">
+													→ {slotEnd(slot.time, slot.durationHours)}
+												</p>
+											</div>
+											<div class="bg-muted-foreground/20 h-8 w-px"></div>
+											<div class="min-w-0 flex-1">
+												<p class="text-sm font-medium truncate">
+													{slot.packageEmoji} {slot.packageName}
+												</p>
+												<p class="text-xs text-muted-foreground truncate">
+													{slot.clientName}
+												</p>
+											</div>
+										</div>
+									{/each}
+								</div>
+							{:else}
+								<div class="border-primary/20 bg-primary/5 space-y-1 rounded-lg border p-4">
+									<div class="flex items-center gap-2">
+										<svg
+											class="text-primary h-4 w-4 shrink-0"
+											fill="none"
+											viewBox="0 0 24 24"
+											stroke="currentColor"
+											stroke-width="2"
+										>
+											<path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+										</svg>
+										<p class="text-primary text-sm font-medium">Available all day</p>
+									</div>
+									<p class="text-muted-foreground pl-6 text-xs">
+										No sessions booked yet. Reach out to discuss your event.
+									</p>
+								</div>
+							{/if}
+						{/if}
 					</div>
 				{/if}
 
@@ -562,7 +649,7 @@
 		<Card.Root class="animate-in-up" style="--i: 4">
 			<Card.Header>
 				<Card.Title>Service packages</Card.Title>
-				<Card.Description>Available services and pricing.</Card.Description>
+				<Card.Description>Available services and pricing. Each includes the session duration.</Card.Description>
 			</Card.Header>
 			<Card.Content>
 				{#if data.packages.length > 0}
@@ -575,7 +662,10 @@
 									>
 										{pkg.emoji}
 									</span>
-									<span class="text-sm font-medium">{pkg.name}</span>
+									<div>
+										<span class="text-sm font-medium">{pkg.name}</span>
+										<p class="text-[11px] text-muted-foreground">{pkg.duration_hours} hrs</p>
+									</div>
 								</div>
 								<span class="text-sm font-semibold tabular-nums">
 									{fmtCurrency(pkg.price)}

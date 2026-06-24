@@ -44,29 +44,44 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 		.select('blackout_date')
 		.eq('mua_id', muaId);
 
-	// 5. Query ONLY active, unexpired, or pending bookings (optimizes query size)
+	// 5. Query active bookings grouped by date as daySlots
 	const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
 
 	const { data: bookings } = await supabase
 		.from('bookings')
-		.select('event_date, status, locked_at, invite_id') // Added invite_id
+		.select('event_date, event_time, status, locked_at, invite_id, client_name, packages!inner(name, emoji, duration_hours)')
 		.eq('mua_id', muaId)
 		.gte('event_date', new Date().toISOString().split('T')[0])
 		.or(`status.in.("CONFIRMED","PENDING_APPROVAL"),and(status.eq.CHECKING_OUT,locked_at.gt.${tenMinutesAgo})`);
 
+	// Group into daySlots, self-excluding this invite's own CHECKING_OUT
+	const daySlots: Record<string, DaySlot[]> = {};
+	for (const b of bookings || []) {
+		// Self-exclusion: skip this invite's own CHECKING_OUT session
+		if (b.status === 'CHECKING_OUT' && b.invite_id === invite.id) {
+			continue;
+		}
+		const dateKey = b.event_date;
+		if (!daySlots[dateKey]) daySlots[dateKey] = [];
+		daySlots[dateKey].push({
+			time: b.event_time?.slice(0, 5) || '00:00',
+			clientName: b.client_name || 'Client',
+			packageName: b.packages?.name || '',
+			packageEmoji: b.packages?.emoji || '💄',
+			durationHours: b.packages?.duration_hours || 3.0,
+			bufferMinutes: 0
+		});
+	}
+
+	// Capacity blockers count (for free-tier check) — same self-exclusion
 	const capacityBlockers = bookings?.filter((b: any) => {
 		if (b.status === 'CHECKING_OUT' && b.invite_id === invite.id) {
-			return false; // Self-exclusion: this is the client's current active checkout session
+			return false;
 		}
 		return true;
 	}) || [];
 
-	const occupiedDates = bookings?.map((b: any) => b.event_date) || [];
-
-	const disabledDates = new Set([
-		...(blackouts?.map((b: any) => b.blackout_date) || []),
-		...occupiedDates
-	]);
+	const blackoutDateSet = new Set(blackouts?.map((b: any) => b.blackout_date) || []);
 
 	// 6. Dynamic Free-Tier Capacity Check
 	if (mua.subscription_plan === 'FREE' && capacityBlockers.length >= 2) {
@@ -76,7 +91,7 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 	// 7. Fetch Studio config details & ALL active packages for selection
 	const { data: config } = await supabase
 		.from('mua_configs')
-		.select('studio_name, deposit_mode, deposit_value')
+		.select('studio_name, deposit_mode, deposit_value, working_hours_start, working_hours_end, default_buffer_minutes')
 		.eq('mua_id', muaId)
 		.single();
 
@@ -93,9 +108,13 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 		token,
 		invite,
 		packages: packages || [],
-		disabledDates: Array.from(disabledDates),
+		daySlots,
+		blackoutDates: Array.from(blackoutDateSet),
 		studioName: config?.studio_name || 'Makeup Studio',
-		defaultConfig: config
+		defaultConfig: config,
+		workingHoursStart: config?.working_hours_start?.slice(0, 5) || '08:00',
+		workingHoursEnd: config?.working_hours_end?.slice(0, 5) || '18:00',
+		defaultBufferMinutes: config?.default_buffer_minutes ?? 0
 	};
 };
 
@@ -144,7 +163,11 @@ export const actions: Actions = {
 				'INVITE_ALREADY_USED': 'This invitation link has already been used.',
 				'INVITE_EXPIRED': 'This invitation link has expired.',
 				'MUA_CAPACITY_EXCEEDED': 'The MUA has temporarily reached their booking capacity limit.',
-				'DATE_ALREADY_TAKEN': 'This date has just been locked by another client.'
+				'DATE_ALREADY_TAKEN': 'This date has just been locked by another client.',
+				'TIME_SLOT_CONFLICT': 'This time slot overlaps with an existing booking. Please choose a different time.',
+				'BEFORE_WORKING_HOURS': rpcResult.message || 'The selected time is before the MUA\'s working hours.',
+				'AFTER_WORKING_HOURS': rpcResult.message || 'The booking would extend past the MUA\'s working hours.',
+				'PACKAGE_NOT_FOUND': 'The selected package could not be found.'
 			};
 			return fail(400, { error: errorMapping[rpcResult?.error] || 'This slot is unavailable.' });
 		}

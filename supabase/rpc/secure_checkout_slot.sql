@@ -1,18 +1,50 @@
-
+CREATE OR REPLACE FUNCTION public.secure_checkout_slot(
+  p_mua_id UUID,
+  p_invite_id UUID DEFAULT NULL,
+  p_package_id BIGINT DEFAULT NULL,
+  p_event_date DATE DEFAULT NULL,
+  p_event_time TIME DEFAULT NULL,
+  p_client_name TEXT DEFAULT NULL,
+  p_client_phone TEXT DEFAULT NULL,
+  p_venue_address TEXT DEFAULT NULL,
+  p_total_amount NUMERIC DEFAULT 0,
+  p_deposit_amount NUMERIC DEFAULT 0,
+  p_balance_amount NUMERIC DEFAULT 0
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+AS $$
 DECLARE
   v_subscription_plan plan_type;
   v_active_bookings_count INT;
-  v_date_conflict_count INT;
+  v_overlap_count INT;
   v_new_booking_id UUID;
   v_is_used BOOLEAN;
   v_expires_at TIMESTAMPTZ;
+
+  -- Package details
+  v_duration_hours NUMERIC;
+
+  -- Config details
+  v_working_hours_start TIME;
+  v_working_hours_end TIME;
+  v_default_buffer_minutes SMALLINT;
+  v_max_active_bookings SMALLINT;
+
+  -- Effective buffer for this booking
+  v_buffer_minutes SMALLINT;
+
+  -- Computed slot boundaries
+  v_req_start TIME;
+  v_req_end TIME;
 BEGIN
   -- Row-level locking to serialize concurrent checks for this specific MUA
   PERFORM 1 FROM public.mua_configs WHERE mua_id = p_mua_id FOR UPDATE;
 
   -- 1. Verify integrity of the invite link
   IF p_invite_id IS NOT NULL THEN
-    SELECT is_used, expires_at INTO v_is_used, v_expires_at
+    SELECT is_used, expires_at, buffer_minutes_override
+    INTO v_is_used, v_expires_at, v_buffer_minutes
     FROM public.invites
     WHERE id = p_invite_id AND mua_id = p_mua_id;
 
@@ -29,12 +61,59 @@ BEGIN
     END IF;
   END IF;
 
-  -- 2. Fetch MUA subscription status
+  -- 2. Fetch MUA subscription plan and config
   SELECT subscription_plan INTO v_subscription_plan
   FROM public.muas
   WHERE id = p_mua_id;
 
-  -- 3. Calculate concurrent active bookings
+  SELECT
+    working_hours_start,
+    working_hours_end,
+    default_buffer_minutes,
+    max_active_bookings
+  INTO
+    v_working_hours_start,
+    v_working_hours_end,
+    v_default_buffer_minutes,
+    v_max_active_bookings
+  FROM public.mua_configs
+  WHERE mua_id = p_mua_id;
+
+  -- 3. Fetch package duration
+  SELECT duration_hours INTO v_duration_hours
+  FROM public.packages
+  WHERE id = p_package_id;
+
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('success', false, 'error', 'PACKAGE_NOT_FOUND');
+  END IF;
+
+  -- 4. Determine effective buffer: invite override → config default → 0
+  IF p_invite_id IS NOT NULL THEN
+    -- v_buffer_minutes already loaded from invites query above
+    IF v_buffer_minutes IS NULL THEN
+      v_buffer_minutes := v_default_buffer_minutes;
+    END IF;
+  ELSE
+    v_buffer_minutes := v_default_buffer_minutes;
+  END IF;
+
+  -- 5. Compute requested time slot window
+  v_req_start := p_event_time;
+  v_req_end := p_event_time + (v_duration_hours || ' hours')::INTERVAL + (v_buffer_minutes || ' minutes')::INTERVAL;
+
+  -- 6. Validate working hours
+  IF p_event_time < v_working_hours_start THEN
+    RETURN jsonb_build_object('success', false, 'error', 'BEFORE_WORKING_HOURS',
+      'message', 'Event time is before the MUA''s working hours (' || v_working_hours_start || ').');
+  END IF;
+
+  IF v_req_end > v_working_hours_end THEN
+    RETURN jsonb_build_object('success', false, 'error', 'AFTER_WORKING_HOURS',
+      'message', 'Booking would extend past the MUA''s working hours (' || v_working_hours_end || ').');
+  END IF;
+
+  -- 7. Count active bookings for capacity check
   SELECT COUNT(*) INTO v_active_bookings_count
   FROM public.bookings
   WHERE mua_id = p_mua_id
@@ -42,24 +121,40 @@ BEGIN
     AND status IN ('CONFIRMED', 'PENDING_APPROVAL', 'CHECKING_OUT')
     AND NOT (status = 'CHECKING_OUT' AND locked_at < NOW() - INTERVAL '10 minutes');
 
-  -- Enforce FREE plan capacity limits
+  -- 8. Enforce capacity limits based on subscription plan
+  -- FREE plan: max 2 active bookings. PAID plan: unlimited.
   IF v_subscription_plan = 'FREE' AND v_active_bookings_count >= 2 THEN
     RETURN jsonb_build_object('success', false, 'error', 'MUA_CAPACITY_EXCEEDED');
   END IF;
 
-  -- 4. Check for double-booking conflicts on the target date
-  SELECT COUNT(*) INTO v_date_conflict_count
-  FROM public.bookings
-  WHERE mua_id = p_mua_id
-    AND event_date = p_event_date
-    AND status IN ('CONFIRMED', 'PENDING_APPROVAL', 'CHECKING_OUT')
-    AND NOT (status = 'CHECKING_OUT' AND locked_at < NOW() - INTERVAL '10 minutes');
+  -- 9. Time-slot overlap detection
+  -- An existing booking conflicts if its occupied window overlaps with the requested window.
+  -- Each existing booking's occupied window = [event_time, event_time + package.duration_hours + effective_buffer]
+  WITH existing_slots AS (
+    SELECT
+      b.event_time,
+      b.event_time + (p.duration_hours || ' hours')::INTERVAL +
+        COALESCE(
+          (SELECT i.buffer_minutes_override FROM public.invites i WHERE i.id = b.invite_id),
+          v_default_buffer_minutes,
+          0
+        )::INT * INTERVAL '1 minute' AS slot_end
+    FROM public.bookings b
+    JOIN public.packages p ON p.id = b.package_id
+    WHERE b.mua_id = p_mua_id
+      AND b.event_date = p_event_date
+      AND b.status IN ('CONFIRMED', 'PENDING_APPROVAL', 'CHECKING_OUT')
+      AND NOT (b.status = 'CHECKING_OUT' AND b.locked_at < NOW() - INTERVAL '10 minutes')
+  )
+  SELECT COUNT(*) INTO v_overlap_count
+  FROM existing_slots
+  WHERE v_req_start < slot_end AND v_req_end > event_time;
 
-  IF v_date_conflict_count > 0 THEN
-    RETURN jsonb_build_object('success', false, 'error', 'DATE_ALREADY_TAKEN');
+  IF v_overlap_count > 0 THEN
+    RETURN jsonb_build_object('success', false, 'error', 'TIME_SLOT_CONFLICT');
   END IF;
 
-  -- 5. Insert checking-out block
+  -- 10. Insert checking-out block
   INSERT INTO public.bookings (
     mua_id,
     invite_id,
@@ -98,3 +193,4 @@ BEGIN
     'locked_until', NOW() + INTERVAL '10 minutes'
   );
 END;
+$$;

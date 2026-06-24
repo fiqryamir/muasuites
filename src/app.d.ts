@@ -13,6 +13,16 @@ declare global {
 		// interface PageState {}
 		// interface Platform {}
 	}
+
+	/** A single booked time slot on a given date */
+	interface DaySlot {
+		time: string;
+		clientName: string;
+		packageName: string;
+		packageEmoji: string;
+		durationHours: number;
+		bufferMinutes: number;
+	}
 }
 
 export {};

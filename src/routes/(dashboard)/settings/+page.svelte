@@ -38,10 +38,39 @@
 	let duitnowQrUrl = $state('');
 	let qrFile = $state<File | null>(null);
 
+	// Working hours (Select-based shadcn time picker)
+	const hoursList = Array.from({ length: 12 }, (_, i) => (i + 1).toString().padStart(2, '0'));
+	const minutesList = Array.from({ length: 12 }, (_, i) => (i * 5).toString().padStart(2, '0'));
+
+	let whStartHour = $state('08');
+	let whStartMin = $state('00');
+	let whStartPeriod = $state('AM');
+	let whEndHour = $state('06');
+	let whEndMin = $state('00');
+	let whEndPeriod = $state('PM');
+
+	let workingHoursStart = $derived.by(() => {
+		let hh = parseInt(whStartHour, 10);
+		if (whStartPeriod === 'PM' && hh !== 12) hh += 12;
+		if (whStartPeriod === 'AM' && hh === 12) hh = 0;
+		return `${hh.toString().padStart(2, '0')}:${whStartMin}`;
+	});
+
+	let workingHoursEnd = $derived.by(() => {
+		let hh = parseInt(whEndHour, 10);
+		if (whEndPeriod === 'PM' && hh !== 12) hh += 12;
+		if (whEndPeriod === 'AM' && hh === 12) hh = 0;
+		return `${hh.toString().padStart(2, '0')}:${whEndMin}`;
+	});
+
+	let defaultBufferMinutesStr = $state('0');
+	let defaultBufferMinutes = $derived(parseInt(defaultBufferMinutesStr, 10));
+
 	// Package form state
 	let pkgEmoji = $state('💄');
 	let pkgName = $state('');
 	let pkgPrice = $state(0);
+	let pkgDuration = $state(3.0);
 
 	const configSchema = z.object({
 		slug: z
@@ -62,6 +91,17 @@
 		pkgName: z.string().min(3, 'Name must be at least 3 characters.'),
 		pkgPrice: z.number().positive('Price must be greater than RM 0.')
 	});
+
+	function parseTimeToComponents(timeStr: string) {
+		const [h, m] = timeStr.split(':').map(Number);
+		const period = h >= 12 ? 'PM' : 'AM';
+		const h12 = h > 12 ? h - 12 : h === 0 ? 12 : h;
+		return {
+			hour: h12.toString().padStart(2, '0'),
+			min: m.toString().padStart(2, '0'),
+			period
+		};
+	}
 
 	onMount(async () => {
 		if (!session) return;
@@ -98,6 +138,19 @@
 
 			const raw = conf.whatsapp_number || '';
 			whatsappLocal = raw.startsWith('60') ? raw.substring(2) : raw;
+
+			// Parse working hours into Select components
+			const start = parseTimeToComponents(conf.working_hours_start?.slice(0, 5) || '08:00');
+			whStartHour = start.hour;
+			whStartMin = start.min;
+			whStartPeriod = start.period;
+
+			const end = parseTimeToComponents(conf.working_hours_end?.slice(0, 5) || '18:00');
+			whEndHour = end.hour;
+			whEndMin = end.min;
+			whEndPeriod = end.period;
+
+			defaultBufferMinutesStr = String(conf.default_buffer_minutes ?? 0);
 		}
 
 		const { data: pkgs } = await supabase
@@ -186,7 +239,10 @@
 				telegram_chat_id: telegramChatId,
 				deposit_mode: depositMode,
 				deposit_value: depositValue,
-				duitnow_qr_url: finalQrUrl
+				duitnow_qr_url: finalQrUrl,
+				working_hours_start: workingHoursStart,
+				working_hours_end: workingHoursEnd,
+				default_buffer_minutes: defaultBufferMinutes
 			})
 			.eq('mua_id', userId);
 
@@ -217,7 +273,8 @@
 			mua_id: userId,
 			name: pkgName,
 			price: pkgPrice,
-			emoji: pkgEmoji
+			emoji: pkgEmoji,
+			duration_hours: pkgDuration
 		});
 
 		addingPackage = false;
@@ -228,6 +285,7 @@
 			pkgName = '';
 			pkgPrice = 0;
 			pkgEmoji = '💄';
+			pkgDuration = 3.0;
 			toast.success('Package added.');
 			await loadSettings();
 		}
@@ -304,11 +362,11 @@
 			{/if}
 		</div>
 
-		<!-- Profile & Booking Card -->
+		<!-- Profile & Booking Card (includes scheduling section inside the form) -->
 		<Card.Root>
 			<Card.Header>
 				<Card.Title>Profile & booking</Card.Title>
-				<Card.Description>Your studio identity and how clients find and pay you.</Card.Description>
+				<Card.Description>Your studio identity, availability, and how clients find and pay you.</Card.Description>
 			</Card.Header>
 			<Card.Content>
 				<form onsubmit={handleSaveConfig} class="space-y-6">
@@ -461,6 +519,128 @@
 							</div>
 						{/if}
 					</div>
+
+					<Separator />
+
+					<!-- Scheduling Section (inside the same form — saves together) -->
+					<div class="space-y-4">
+						<h3 class="text-sm font-semibold tracking-tight">Scheduling</h3>
+						<p class="text-xs text-muted-foreground">Your daily availability and time-slot settings.</p>
+						
+						<FieldGroup class="grid gap-6 sm:grid-cols-2">
+							<!-- Working Hours Start -->
+							<Field class="gap-2">
+								<FieldLabel>Working hours start</FieldLabel>
+								<div class="flex items-center gap-2">
+									<div class="flex-1">
+										<Select.Root type="single" bind:value={whStartHour}>
+											<Select.Trigger class="bg-muted focus:ring-ring w-full rounded-full border-none px-4 py-2 text-sm focus:ring-2">{whStartHour}</Select.Trigger>
+											<Select.Content class="max-h-[200px] overflow-y-auto">
+												{#each hoursList as hour}
+													<Select.Item value={hour}>{hour}</Select.Item>
+												{/each}
+											</Select.Content>
+										</Select.Root>
+									</div>
+									<span class="text-muted-foreground text-sm font-medium">:</span>
+									<div class="flex-1">
+										<Select.Root type="single" bind:value={whStartMin}>
+											<Select.Trigger class="bg-muted focus:ring-ring w-full rounded-full border-none px-4 py-2 text-sm focus:ring-2">{whStartMin}</Select.Trigger>
+											<Select.Content class="max-h-[200px] overflow-y-auto">
+												{#each minutesList as min}
+													<Select.Item value={min}>{min}</Select.Item>
+												{/each}
+											</Select.Content>
+										</Select.Root>
+									</div>
+									<div class="flex-1">
+										<Select.Root type="single" bind:value={whStartPeriod}>
+											<Select.Trigger class="bg-muted focus:ring-ring w-full rounded-full border-none px-4 py-2 text-sm focus:ring-2">{whStartPeriod}</Select.Trigger>
+											<Select.Content>
+												<Select.Item value="AM">AM</Select.Item>
+												<Select.Item value="PM">PM</Select.Item>
+											</Select.Content>
+										</Select.Root>
+									</div>
+								</div>
+							</Field>
+
+							<!-- Working Hours End -->
+							<Field class="gap-2">
+								<FieldLabel>Working hours end</FieldLabel>
+								<div class="flex items-center gap-2">
+									<div class="flex-1">
+										<Select.Root type="single" bind:value={whEndHour}>
+											<Select.Trigger class="bg-muted focus:ring-ring w-full rounded-full border-none px-4 py-2 text-sm focus:ring-2">{whEndHour}</Select.Trigger>
+											<Select.Content class="max-h-[200px] overflow-y-auto">
+												{#each hoursList as hour}
+													<Select.Item value={hour}>{hour}</Select.Item>
+												{/each}
+											</Select.Content>
+										</Select.Root>
+									</div>
+									<span class="text-muted-foreground text-sm font-medium">:</span>
+									<div class="flex-1">
+										<Select.Root type="single" bind:value={whEndMin}>
+											<Select.Trigger class="bg-muted focus:ring-ring w-full rounded-full border-none px-4 py-2 text-sm focus:ring-2">{whEndMin}</Select.Trigger>
+											<Select.Content class="max-h-[200px] overflow-y-auto">
+												{#each minutesList as min}
+													<Select.Item value={min}>{min}</Select.Item>
+												{/each}
+											</Select.Content>
+										</Select.Root>
+									</div>
+									<div class="flex-1">
+										<Select.Root type="single" bind:value={whEndPeriod}>
+											<Select.Trigger class="bg-muted focus:ring-ring w-full rounded-full border-none px-4 py-2 text-sm focus:ring-2">{whEndPeriod}</Select.Trigger>
+											<Select.Content>
+												<Select.Item value="AM">AM</Select.Item>
+												<Select.Item value="PM">PM</Select.Item>
+											</Select.Content>
+										</Select.Root>
+									</div>
+								</div>
+							</Field>
+						</FieldGroup>
+
+						<Field class="gap-2">
+							<FieldLabel>Travel buffer between sessions</FieldLabel>
+							<Select.Root type="single" bind:value={defaultBufferMinutesStr}>
+								<Select.Trigger
+									id="buffer"
+									class="flex h-10 w-full items-center justify-between rounded-full border-none bg-muted px-4 py-2 text-sm ring-offset-background focus:ring-2 focus:ring-ring"
+								>
+									{defaultBufferMinutes === 0 ? 'No buffer' : `${defaultBufferMinutes} min`}
+								</Select.Trigger>
+								<Select.Content>
+									<Select.Item value="0">No buffer</Select.Item>
+									<Select.Item value="15">15 min</Select.Item>
+									<Select.Item value="30">30 min</Select.Item>
+									<Select.Item value="45">45 min</Select.Item>
+									<Select.Item value="60">60 min</Select.Item>
+								</Select.Content>
+							</Select.Root>
+							<p class="px-2 text-xs text-muted-foreground">Extra time reserved after each booking for travel. This blocks the slot so no other client can book too close.</p>
+						</Field>
+
+						<!-- Plan-based capacity (read-only) -->
+						<Field class="gap-2">
+							<FieldLabel>Active booking capacity</FieldLabel>
+							<div class="border-border bg-muted/30 rounded-lg border p-3">
+								{#if profile?.subscription_plan === 'FREE'}
+									<p class="text-sm font-medium">2 active bookings</p>
+									<p class="text-xs text-muted-foreground mt-0.5">
+										FREE plan limit. <span class="text-primary underline underline-offset-2">Upgrade</span> for unlimited bookings.
+									</p>
+								{:else}
+									<p class="text-sm font-medium">Unlimited</p>
+									<p class="text-xs text-muted-foreground mt-0.5">
+										Paid plan — no capacity restrictions.
+									</p>
+								{/if}
+							</div>
+						</Field>
+					</div>
 		
 					<div class="flex justify-end pt-2">
 						<Button type="submit" disabled={saving} class="rounded-full px-8">
@@ -488,7 +668,10 @@
 									>
 										{pkg.emoji}
 									</span>
-									<span class="text-sm font-medium">{pkg.name}</span>
+									<div>
+										<span class="text-sm font-medium">{pkg.name}</span>
+										<p class="text-[11px] text-muted-foreground">{pkg.duration_hours} hrs</p>
+									</div>
 								</div>
 								<span class="text-sm font-semibold tabular-nums">
 									RM {Number(pkg.price).toLocaleString('en-MY', {
@@ -510,7 +693,7 @@
 
 				<div class="space-y-4">
 					<h4 class="text-sm font-semibold">Add new package</h4>
-					<form onsubmit={handleAddPackage} class="grid gap-4 sm:grid-cols-[5rem_1fr_8rem]">
+					<form onsubmit={handleAddPackage} class="grid gap-4 sm:grid-cols-[5rem_1fr_7rem_7rem]">
 						<Field class="gap-2">
 							<FieldLabel>Icon</FieldLabel>
 							<Input id="pkg-emoji" bind:value={pkgEmoji} required class="text-center rounded-full bg-muted border-none" />
@@ -520,10 +703,14 @@
 							<Input id="pkg-name" bind:value={pkgName} required placeholder="e.g., Nikah Full Glam" class="rounded-full bg-muted border-none px-4" />
 						</Field>
 						<Field class="gap-2">
+							<FieldLabel>Duration (hrs)</FieldLabel>
+							<Input id="pkg-duration" type="number" step="0.5" min="0.5" max="12" bind:value={pkgDuration} required class="rounded-full bg-muted border-none px-4" />
+						</Field>
+						<Field class="gap-2">
 							<FieldLabel>Price (RM)</FieldLabel>
 							<Input id="pkg-price" type="number" step="0.01" bind:value={pkgPrice} required placeholder="800.00" class="rounded-full bg-muted border-none px-4" />
 						</Field>
-						<div class="flex justify-end sm:col-span-3">
+						<div class="flex justify-end sm:col-span-4">
 							<Button type="submit" variant="outline" disabled={addingPackage} class="rounded-full">
 								{addingPackage ? 'Adding...' : 'Add package'}
 							</Button>
