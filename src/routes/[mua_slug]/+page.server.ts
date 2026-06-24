@@ -6,38 +6,37 @@ export const load: PageServerLoad = async ({ params, locals, platform }) => {
 	const { mua_slug } = params;
 	const { supabase } = locals;
 
-	// ---- KV Cache Lookup ----
-	// The public profile page is the #1 traffic source (Instagram bio links).
-	// We cache the entire response in Cloudflare KV with a 60s TTL,
-	// invalidating explicitly when slots change (booking created/approved/rejected).
 	const kv = platform?.env?.MUA_CACHE;
 	const cacheKey = publicProfileKey(mua_slug);
 
 	const cached = await kvGetOrFetch<PublicProfilePageData | null>(
 		kv,
 		cacheKey,
-		60, // 60-second TTL fallback
+		60,
 		async () => {
-			// ---- Cache Miss: Fetch from Database via Consolidated RPC ----
 			const { data: pageData, error: rpcError } = await supabase
 				.rpc('get_mua_public_page', { p_slug: mua_slug });
 
-			if (rpcError || !pageData) {
-				// If the RPC fails, throw 404 (most likely slug not found)
-				throw error(404, 'Makeup artist profile not found.');
+			// 🚨 FIX: Log the real error to your terminal!
+			if (rpcError) {
+				console.error('[Supabase RPC Error]:', rpcError);
+				throw error(500, 'Database error while fetching profile.');
 			}
+
+			// Cleanly return null if MUA isn't found
+			if (!pageData) return null;
 
 			return pageData as PublicProfilePageData;
 		}
 	);
 
-	// Handle the case where the RPC returned null (slug not found)
+	// Handle the true 404 case here
 	if (!cached) {
 		throw error(404, 'Makeup artist profile not found.');
 	}
 
 	const config = cached.config ?? {};
-	const daySlotsMap = (cached.day_slots ?? {}) as Record<string, DaySlot[]>;
+	const daySlotsMap = (cached.day_slots ?? {}) as Record<string, any[]>;
 	const blackoutSet = new Set<string>(cached.blackout_dates ?? []);
 
 	return {

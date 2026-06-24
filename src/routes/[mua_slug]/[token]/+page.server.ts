@@ -147,7 +147,7 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 };
 
 export const actions: Actions = {
-	secureSlot: async ({ request, locals }) => {
+	secureSlot: async ({ request, locals, platform, params }) => {
 		const { supabase } = locals;
 		const formData = await request.formData();
 
@@ -205,6 +205,15 @@ export const actions: Actions = {
 			.select('studio_name, whatsapp_number, duitnow_qr_url')
 			.eq('mua_id', data.mua_id)
 			.single();
+
+		// ---- Cache Invalidation ----
+		// A CHECKING_OUT booking was created (slot locked for 10 minutes).
+		// Invalidate the public profile cache so the slot shows as occupied immediately.
+		if (params?.mua_slug) {
+			const { publicProfileKey, kvInvalidate } = await import('$lib/cache.server');
+			const kv = platform?.env?.MUA_CACHE;
+			await kvInvalidate(kv, publicProfileKey(params.mua_slug));
+		}
 
 		return {
 			success: true,
