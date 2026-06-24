@@ -11,7 +11,20 @@ declare global {
 			session: Session | null;
 		}
 		// interface PageState {}
-		// interface Platform {}
+		interface Platform {
+			/** Cloudflare KV namespace for cached public profile data.
+			 *  Bound via wrangler.jsonc `kv_namespaces[0].binding = "MUA_CACHE"`. */
+			env: {
+				MUA_CACHE: KVNamespace;
+			};
+		}
+	}
+
+	/** Cloudflare KV namespace interface (type-only, resolved at runtime). */
+	interface KVNamespace {
+		get(key: string, options?: { type?: 'text' | 'json' | 'arrayBuffer' | 'stream' }): Promise<string | null>;
+		put(key: string, value: string, options?: { expirationTtl?: number }): Promise<void>;
+		delete(key: string): Promise<void>;
 	}
 
 	/** A single booked time slot on a given date */

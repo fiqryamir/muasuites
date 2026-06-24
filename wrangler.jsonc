@@ -9,5 +9,11 @@
     },
     "compatibility_flags": [
       "nodejs_compat"
+    ],
+    "kv_namespaces": [
+      {
+        "binding": "MUA_CACHE",
+        "id": "mua-cache"
+      }
     ]
   }

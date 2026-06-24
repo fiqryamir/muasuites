@@ -257,6 +257,14 @@
 			toast.error(confErr.message);
 		} else {
 			toast.success('Settings saved.');
+			// Invalidate public profile cache so updated config/packages/blackouts propagate immediately
+			if (slug) {
+				fetch('/api/cache/invalidate', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ slugs: [slug] })
+				}).catch(() => {});
+			}
 			qrFile = null;
 			await loadSettings();
 		}

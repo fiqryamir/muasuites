@@ -248,6 +248,14 @@
 			toast.error('Rejection failed: ' + error.message);
 		} else {
 			toast.success('Booking rejected.');
+			// Invalidate public profile cache so the freed slot is visible immediately
+			if (muaSlug) {
+				fetch('/api/cache/invalidate', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ slugs: [muaSlug] })
+				}).catch(() => {});
+			}
 			await loadBookings();
 		}
 	}
@@ -292,6 +300,14 @@
 					headers: { 'Content-Type': 'application/json' },
 					body: JSON.stringify({ bookingId: booking.id, balanceToken })
 				}).catch(() => {});
+				// Invalidate public profile cache so the confirmed slot is visible immediately
+				if (muaSlug) {
+					fetch('/api/cache/invalidate', {
+						method: 'POST',
+						headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify({ slugs: [muaSlug] })
+					}).catch(() => {});
+				}
 				await loadBookings();
 			}
 		} else {
@@ -305,6 +321,14 @@
 				toast.error('Approval failed: ' + error.message);
 			} else {
 				toast.success('Booking confirmed.');
+				// Invalidate public profile cache so the confirmed slot is visible immediately
+				if (muaSlug) {
+					fetch('/api/cache/invalidate', {
+						method: 'POST',
+						headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify({ slugs: [muaSlug] })
+					}).catch(() => {});
+				}
 				await loadBookings();
 			}
 		}

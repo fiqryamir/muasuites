@@ -213,7 +213,7 @@ export const actions: Actions = {
 		};
 	},
 
-	submitReceipt: async ({ request, locals }) => {
+	submitReceipt: async ({ request, locals, platform, params }) => {
 		const { supabase } = locals;
 		const formData = await request.formData();
 		const bookingId = formData.get('booking_id')?.toString();
@@ -297,6 +297,15 @@ export const actions: Actions = {
 			// We await the delivery to guarantee completion under serverless runtimes
 			const { sendTelegramAlert } = await import('$lib/telegram.server');
 			await sendTelegramAlert(config.telegram_chat_id, telegramMessage.trim());
+		}
+
+		// ---- Cache Invalidation ----
+		// A new booking has been created (CHECKING_OUT → PENDING_APPROVAL).
+		// Invalidate the public profile cache so the day slot shows as occupied.
+		if (params?.mua_slug) {
+			const { publicProfileKey, kvInvalidate } = await import('$lib/cache.server');
+			const kv = platform?.env?.MUA_CACHE;
+			await kvInvalidate(kv, publicProfileKey(params.mua_slug));
 		}
 
 		return { success: true };

@@ -1,83 +1,52 @@
 import { error } from '@sveltejs/kit';
 import type { PageServerLoad } from './$types';
+import { publicProfileKey, kvGetOrFetch } from '$lib/cache.server';
 
-export const load: PageServerLoad = async ({ params, locals }) => {
+export const load: PageServerLoad = async ({ params, locals, platform }) => {
 	const { mua_slug } = params;
-	const { supabase } = locals; // Extract the safe, request-scoped client
+	const { supabase } = locals;
 
-	// 1. Fetch MUA Profile
-	const { data: mua, error: muaError } = await supabase
-		.from('muas')
-		.select('id, slug, subscription_plan')
-		.eq('slug', mua_slug)
-		.single();
+	// ---- KV Cache Lookup ----
+	// The public profile page is the #1 traffic source (Instagram bio links).
+	// We cache the entire response in Cloudflare KV with a 60s TTL,
+	// invalidating explicitly when slots change (booking created/approved/rejected).
+	const kv = platform?.env?.MUA_CACHE;
+	const cacheKey = publicProfileKey(mua_slug);
 
-	if (muaError || !mua) {
+	const cached = await kvGetOrFetch<PublicProfilePageData | null>(
+		kv,
+		cacheKey,
+		60, // 60-second TTL fallback
+		async () => {
+			// ---- Cache Miss: Fetch from Database via Consolidated RPC ----
+			const { data: pageData, error: rpcError } = await supabase
+				.rpc('get_mua_public_page', { p_slug: mua_slug });
+
+			if (rpcError || !pageData) {
+				// If the RPC fails, throw 404 (most likely slug not found)
+				throw error(404, 'Makeup artist profile not found.');
+			}
+
+			return pageData as PublicProfilePageData;
+		}
+	);
+
+	// Handle the case where the RPC returned null (slug not found)
+	if (!cached) {
 		throw error(404, 'Makeup artist profile not found.');
 	}
 
-	const muaId = mua.id;
-
-	// 2. Fetch packages & configs
-	const { data: config } = await supabase
-		.from('mua_configs')
-		.select('*')
-		.eq('mua_id', muaId)
-		.single();
-
-	const { data: packages } = await supabase
-		.from('packages')
-		.select('*')
-		.eq('mua_id', muaId)
-		.eq('is_active', true)
-		.order('price', { ascending: true });
-
-	// 3. Fetch Explicit Blackout Dates set by MUA
-	const { data: blackouts } = await supabase
-		.from('blackout_dates')
-		.select('blackout_date')
-		.eq('mua_id', muaId);
-
-	// 4. Fetch currently occupied time slots grouped by date
-	// Optimized: filters out old CHECKING_OUT holds directly in the SQL engine
-	const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
-	const todayString = new Date().toISOString().split('T')[0];
-
-	const { data: bookings } = await supabase
-		.from('bookings')
-		.select('event_date, event_time, status, locked_at, client_name, packages!inner(name, emoji, duration_hours)')
-		.eq('mua_id', muaId)
-		.gte('event_date', todayString)
-		.or(`status.in.("CONFIRMED","FULLY_PAID","PENDING_APPROVAL"),and(status.eq.CHECKING_OUT,locked_at.gt.${tenMinutesAgo})`);
-
-	// Group bookings by date into DaySlot arrays
-	const daySlots: Record<string, DaySlot[]> = {};
-	for (const b of bookings || []) {
-		const dateKey = b.event_date;
-		if (!daySlots[dateKey]) daySlots[dateKey] = [];
-		daySlots[dateKey].push({
-			time: b.event_time?.slice(0, 5) || '00:00',
-			clientName: b.client_name || 'Client',
-			packageName: b.packages?.name || '',
-			packageEmoji: b.packages?.emoji || '💄',
-			durationHours: b.packages?.duration_hours || 3.0,
-			bufferMinutes: 0 // The buffer doesn't need to display publicly
-		});
-	}
-
-	// Build a set of date strings that are at capacity or blacked out
-	// For the public page, we consider a date "disabled" only if:
-	//   - It's a blackout date
-	//   - OR the working hours have no remaining capacity (simplified: just show blackouts + bookings info)
-	const blackoutDateSet = new Set(blackouts?.map((b: any) => b.blackout_date) || []);
+	const config = cached.config ?? {};
+	const daySlotsMap = (cached.day_slots ?? {}) as Record<string, DaySlot[]>;
+	const blackoutSet = new Set<string>(cached.blackout_dates ?? []);
 
 	return {
 		muaSlug: mua_slug,
 		studioName: config?.studio_name || 'Makeup Studio',
 		whatsappNumber: config?.whatsapp_number || '',
-		packages: packages || [],
-		daySlots,
-		blackoutDates: Array.from(blackoutDateSet),
+		packages: cached.packages ?? [],
+		daySlots: daySlotsMap,
+		blackoutDates: Array.from(blackoutSet),
 		baseLat: config?.base_lat,
 		baseLng: config?.base_lng,
 		ratePerKm: config?.rate_per_km,
@@ -86,3 +55,13 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 		defaultBufferMinutes: config?.default_buffer_minutes ?? 0
 	};
 };
+
+/** Shape returned by the get_mua_public_page RPC */
+interface PublicProfilePageData {
+	slug: string;
+	mua_id: string;
+	config: Record<string, any> | null;
+	packages: any[];
+	blackout_dates: string[];
+	day_slots: Record<string, DaySlot[]>;
+}
