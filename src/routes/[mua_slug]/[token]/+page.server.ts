@@ -44,15 +44,24 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 		.select('blackout_date')
 		.eq('mua_id', muaId);
 
-	// 5. Query active bookings grouped by date as daySlots
+	// 5. Fetch Studio config details (needed before daySlots for buffer)
+	const { data: config } = await supabase
+		.from('mua_configs')
+		.select('studio_name, deposit_mode, deposit_value, working_hours_start, working_hours_end, default_buffer_minutes')
+		.eq('mua_id', muaId)
+		.single();
+
+	// 6. Query active bookings grouped by date as daySlots
 	const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
 
 	const { data: bookings } = await supabase
 		.from('bookings')
-		.select('event_date, event_time, status, locked_at, invite_id, client_name, packages!inner(name, emoji, duration_hours)')
+		.select('event_date, event_time, status, locked_at, invite_id, client_name, packages!inner(name, emoji, duration_hours), invites!inner(buffer_minutes_override)')
 		.eq('mua_id', muaId)
 		.gte('event_date', new Date().toISOString().split('T')[0])
 		.or(`status.in.("CONFIRMED","FULLY_PAID","PENDING_APPROVAL"),and(status.eq.CHECKING_OUT,locked_at.gt.${tenMinutesAgo})`);
+
+	const defaultBuffer = config?.default_buffer_minutes ?? 0;
 
 	// Group into daySlots, self-excluding this invite's own CHECKING_OUT
 	const daySlots: Record<string, DaySlot[]> = {};
@@ -65,11 +74,11 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 		if (!daySlots[dateKey]) daySlots[dateKey] = [];
 		daySlots[dateKey].push({
 			time: b.event_time?.slice(0, 5) || '00:00',
-			clientName: b.client_name || 'Client',
+			clientName: '',
 			packageName: b.packages?.name || '',
 			packageEmoji: b.packages?.emoji || '💄',
 			durationHours: b.packages?.duration_hours || 3.0,
-			bufferMinutes: 0
+			bufferMinutes: b.invites?.buffer_minutes_override ?? defaultBuffer
 		});
 	}
 
@@ -83,18 +92,12 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 
 	const blackoutDateSet = new Set(blackouts?.map((b: any) => b.blackout_date) || []);
 
-	// 6. Dynamic Free-Tier Capacity Check
+	// 7. Dynamic Free-Tier Capacity Check
 	if (mua.subscription_plan === 'FREE' && capacityBlockers.length >= 2) {
 		return { gateState: 'CAPACITY_PAUSED' };
 	}
 
-	// 7. Fetch Studio config details & ALL active packages for selection
-	const { data: config } = await supabase
-		.from('mua_configs')
-		.select('studio_name, deposit_mode, deposit_value, working_hours_start, working_hours_end, default_buffer_minutes')
-		.eq('mua_id', muaId)
-		.single();
-
+	// 8. Fetch ALL active packages for selection
 	const { data: packages } = await supabase
 		.from('packages')
 		.select('*')

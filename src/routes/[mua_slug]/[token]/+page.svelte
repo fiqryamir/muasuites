@@ -170,6 +170,15 @@
 		return `RM ${a.toLocaleString('en-MY', { minimumFractionDigits: 2 })}`;
 	}
 
+	function fmtDuration(hours: number) {
+		if (!hours || hours <= 0) return '';
+		const h = Math.floor(hours);
+		const m = Math.round((hours - h) * 60);
+		if (h === 0) return `${m}m`;
+		if (m === 0) return `${h}h`;
+		return `${h}h ${m}m`;
+	}
+
 	// --- Per-step validation schemas ---
 	const step1Schema = z.object({
 		selectedDate: z.string().min(1, 'Please select an event date.')
@@ -242,6 +251,41 @@
 	let securing = $state(false);
 	let submitting = $state(false);
 	let bookingId = $state('');
+
+	// Time conflict detection — checks selected time against occupied slots
+	let isTimeConflicting = $derived.by(() => {
+		if (!selectedDate || !selectedPackage || !eventTime) return false;
+		const reqStart = eventTime;
+		const reqEndMins = timeToMinutes(eventTime) + selectedPackage.duration_hours * 60;
+		for (const slot of selectedSlots) {
+			const slotStart = slot.time;
+			const slotEndMins = timeToMinutes(slot.time) + slot.durationHours * 60 + (slot.bufferMinutes || 0);
+			const reqStartMins = timeToMinutes(reqStart);
+			if (reqStartMins < slotEndMins && reqEndMins > timeToMinutes(slotStart)) {
+				return true;
+			}
+		}
+		return false;
+	});
+
+	// Working hours validation — checks selected time + duration fits within MUA's working hours
+	let whStartMinutes = $derived(timeToMinutes(data.workingHoursStart || '08:00'));
+	let whEndMinutes = $derived(timeToMinutes(data.workingHoursEnd || '18:00'));
+
+	let isBeforeWorkingHours = $derived(
+		!!selectedPackage && !!eventTime && timeToMinutes(eventTime) < whStartMinutes
+	);
+
+	let isAfterWorkingHours = $derived(
+		!!selectedPackage && !!eventTime && (timeToMinutes(eventTime) + selectedPackage.duration_hours * 60) > whEndMinutes
+	);
+
+	let timeBlocked = $derived(isTimeConflicting || isBeforeWorkingHours || isAfterWorkingHours);
+
+	function timeToMinutes(t: string) {
+		const [h, m] = t.split(':').map(Number);
+		return h * 60 + m;
+	}
 
 	// Pricing
 	let basePrice = $derived(selectedPackage ? parseFloat(selectedPackage.price) : 0);
@@ -544,9 +588,6 @@
 																<p class="text-sm font-medium truncate">
 																	{slot.packageEmoji} {slot.packageName}
 																</p>
-																<p class="text-xs text-muted-foreground truncate">
-																	{slot.clientName}
-																</p>
 															</div>
 														</div>
 													{/each}
@@ -603,16 +644,19 @@
 												? 'border-primary bg-primary/5 ring-primary ring-1'
 												: 'border-border hover:border-muted-foreground/30'}"
 										>
-											<div class="flex items-center gap-3">
-												<span
-													class="flex h-9 w-9 items-center justify-center rounded-md text-base {selected
-														? 'bg-primary/10'
-														: 'bg-muted'}"
-												>
-													{pkg.emoji}
-												</span>
-												<span class="text-sm font-medium">{pkg.name}</span>
-											</div>
+									<div class="flex items-center gap-3">
+										<span
+											class="flex h-9 w-9 items-center justify-center rounded-md text-base {selected
+												? 'bg-primary/10'
+												: 'bg-muted'}"
+										>
+											{pkg.emoji}
+										</span>
+										<div>
+											<span class="text-sm font-medium">{pkg.name}</span>
+											<p class="text-[11px] text-muted-foreground">{fmtDuration(pkg.duration_hours)}</p>
+										</div>
+									</div>
 											<span class="text-sm font-semibold tabular-nums"
 												>{fmtCurrency(parseFloat(pkg.price))}</span
 											>
@@ -680,8 +724,67 @@
 										</div>
 									</div>
 									<p class="text-muted-foreground px-2 text-[11px]">
-										Selected: <span class="text-foreground font-medium">{eventTimeDisplay}</span>
+										Ready by <span class="text-foreground font-medium">{eventTimeDisplay}</span>
+										{#if selectedPackage}
+											&middot; ends ~<span class="text-foreground font-medium">{slotEnd(eventTime, selectedPackage.duration_hours)}</span>
+											&middot; <span class="text-foreground font-medium">{fmtDuration(selectedPackage.duration_hours)}</span>
+										{/if}
 									</p>
+									{#if isBeforeWorkingHours}
+										<div class="border-destructive/20 bg-destructive/5 mt-1 space-y-1 rounded-lg border p-3">
+											<div class="flex items-center gap-2">
+												<svg
+													class="text-destructive h-4 w-4 shrink-0"
+													fill="none"
+													viewBox="0 0 24 24"
+													stroke="currentColor"
+													stroke-width="2"
+												>
+													<path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
+												</svg>
+												<p class="text-destructive text-xs font-medium">Before working hours</p>
+											</div>
+											<p class="text-muted-foreground pl-6 text-xs">
+												{data.studioName} starts at {fmtTime(data.workingHoursStart)}. Please pick a time from then onwards.
+											</p>
+										</div>
+									{:else if isAfterWorkingHours}
+										<div class="border-destructive/20 bg-destructive/5 mt-1 space-y-1 rounded-lg border p-3">
+											<div class="flex items-center gap-2">
+												<svg
+													class="text-destructive h-4 w-4 shrink-0"
+													fill="none"
+													viewBox="0 0 24 24"
+													stroke="currentColor"
+													stroke-width="2"
+												>
+													<path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
+												</svg>
+												<p class="text-destructive text-xs font-medium">Past working hours</p>
+											</div>
+											<p class="text-muted-foreground pl-6 text-xs">
+												This {fmtDuration(selectedPackage?.duration_hours || 3)} session would extend past {fmtTime(data.workingHoursEnd)}. Please pick an earlier time.
+											</p>
+										</div>
+									{:else if isTimeConflicting}
+										<div class="border-destructive/20 bg-destructive/5 mt-1 space-y-1 rounded-lg border p-3">
+											<div class="flex items-center gap-2">
+												<svg
+													class="text-destructive h-4 w-4 shrink-0"
+													fill="none"
+													viewBox="0 0 24 24"
+													stroke="currentColor"
+													stroke-width="2"
+												>
+													<path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
+												</svg>
+												<p class="text-destructive text-xs font-medium">Time conflict</p>
+											</div>
+											<p class="text-muted-foreground pl-6 text-xs">
+												This time overlaps with an existing session. Please choose a different time.
+											</p>
+										</div>
+									{/if}
 								</Field>
 
 								<Separator />
@@ -707,7 +810,7 @@
 									class="rounded-full px-6"
 									onclick={() => (currentStep = 2)}>Back</Button
 								>
-								<Button class="rounded-full px-6" onclick={() => goNext(4)}>Continue</Button>
+								<Button class="rounded-full px-6" disabled={timeBlocked} onclick={() => goNext(4)}>Continue</Button>
 							</div>
 
 							<!-- STEP 4: Contact -->
@@ -784,8 +887,11 @@
 									</div>
 									<div class="flex items-center justify-between py-3">
 										<div class="space-y-0.5">
-											<p class="text-muted-foreground text-xs">Ready time</p>
-											<p class="text-sm font-medium">{eventTimeDisplay}</p>
+											<p class="text-muted-foreground text-xs">Time window</p>
+											<p class="text-sm font-medium">
+												{eventTimeDisplay} &rarr; {slotEnd(eventTime, selectedPackage?.duration_hours || 3)}
+											</p>
+											<p class="text-muted-foreground text-[11px]">{fmtDuration(selectedPackage?.duration_hours || 3)} session</p>
 										</div>
 									</div>
 									<div class="flex items-center justify-between py-3">

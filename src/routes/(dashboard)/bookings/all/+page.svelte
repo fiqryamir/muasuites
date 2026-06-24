@@ -8,10 +8,13 @@
 	import { DatePicker } from '$lib/components/ui/date-picker';
 	import * as Select from '$lib/components/ui/select';
 	import { Field, FieldGroup, FieldLabel } from '$lib/components/ui/field';
+	import { Separator } from '$lib/components/ui/separator';
 	import * as Dialog from '$lib/components/ui/dialog';
+	import BookingDetailDialog from '$lib/components/ui/booking-detail-dialog.svelte';
 	import type { BookingSearchResult, BookingFilters } from '$lib/bookings';
 	import ReceiptButtons from '$lib/components/ui/receipt-buttons.svelte';
 	import WhatsAppRemind from '$lib/components/ui/whatsapp-remind.svelte';
+	import { fmtDate, fmtDateShort, fmtTime, fmtTimeRange, fmtCurrency, getInitials, relativeTime, statusLabel, statusColor } from '$lib/bookings-ui';
 
 	let { data } = $props();
 
@@ -95,92 +98,8 @@
 		return filters.dir === 'asc' ? ' ↑' : ' ↓';
 	}
 
-	// Helpers (mirrored from dashboard)
-	function fmtDate(d: string) {
-		return new Date(d + 'T00:00:00').toLocaleDateString('en-MY', {
-			day: 'numeric',
-			month: 'short',
-			year: 'numeric'
-		});
-	}
-
-	function fmtDateShort(d: string) {
-		return new Date(d + 'T00:00:00').toLocaleDateString('en-MY', {
-			day: 'numeric',
-			month: 'short'
-		});
-	}
-
-	function fmtTime(t: string) {
-		if (!t) return '';
-		const [h, m] = t.split(':');
-		const hr = parseInt(h);
-		const sfx = hr >= 12 ? 'PM' : 'AM';
-		const dh = hr > 12 ? hr - 12 : hr === 0 ? 12 : hr;
-		return `${dh}:${m} ${sfx}`;
-	}
-
-	function fmtTimeRange(t: string, durationHours?: number) {
-		if (!t || !durationHours) return fmtTime(t);
-		const [h, m] = t.split(':').map(Number);
-		const totalStartMin = h * 60 + m;
-		const totalEndMin = totalStartMin + durationHours * 60;
-		const endH = Math.floor(totalEndMin / 60) % 24;
-		const endM = totalEndMin % 60;
-		const endTime = `${endH.toString().padStart(2, '0')}:${endM.toString().padStart(2, '0')}`;
-		return `${fmtTime(t)} – ${fmtTime(endTime)}`;
-	}
-
-	function fmtCurrency(a: number | string) {
-		return `RM ${Number(a).toLocaleString('en-MY', { minimumFractionDigits: 2 })}`;
-	}
-
-	function getInitials(name: string | null) {
-		if (!name) return '?';
-		const parts = name.trim().split(/\s+/);
-		if (parts.length === 1) return parts[0].charAt(0).toUpperCase();
-		return (parts[0].charAt(0) + parts[parts.length - 1].charAt(0)).toUpperCase();
-	}
-
-	function relativeTime(dateStr: string): string {
-		if (!dateStr) return '';
-		const now = new Date();
-		const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-		const date = new Date(dateStr + 'T00:00:00');
-		const diffMs = date.getTime() - today.getTime();
-		const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24));
-		if (diffDays === 0) return 'today';
-		if (diffDays === 1) return 'tomorrow';
-		if (diffDays === -1) return 'yesterday';
-		if (diffDays > 0) return `in ${diffDays} days`;
-		return `${Math.abs(diffDays)} days ago`;
-	}
-
-	function statusLabel(status: string): string {
-		const labels: Record<string, string> = {
-			PENDING_APPROVAL: 'Needs review',
-			CONFIRMED: 'Confirmed',
-			FULLY_PAID: 'Fully paid',
-			CHECKING_OUT: 'Checking out',
-			EXPIRED: 'Expired',
-			CANCELLED: 'Cancelled',
-			COMPLETED: 'Completed'
-		};
-		return labels[status] || status;
-	}
-
-	function statusColor(status: string): string {
-		const colors: Record<string, string> = {
-			PENDING_APPROVAL: 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300',
-			CONFIRMED: 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300',
-			FULLY_PAID: 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300',
-			CHECKING_OUT: 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300',
-			EXPIRED: 'bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-300',
-			CANCELLED: 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300',
-			COMPLETED: 'bg-muted text-muted-foreground'
-		};
-		return colors[status] || 'bg-muted text-muted-foreground';
-	}
+	// Exposed from $lib/bookings-ui:
+	// fmtDate, fmtDateShort, fmtTime, fmtTimeRange, fmtCurrency, getInitials, relativeTime, statusLabel, statusColor
 </script>
 
 <div class="space-y-6 animate-in-up">
@@ -265,19 +184,19 @@
 		<span>Sort by:</span>
 		<button
 			onclick={() => setSort('event_date')}
-			class="rounded-full px-3 py-1 transition-colors hover:bg-muted {filters.sort === 'event_date' ? 'bg-muted font-medium text-foreground' : ''}"
+			class="rounded-full px-3 py-1 transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none {filters.sort === 'event_date' ? 'bg-muted font-medium text-foreground' : ''}"
 		>
 			Date{sortIcon('event_date')}
 		</button>
 		<button
 			onclick={() => setSort('client_name')}
-			class="rounded-full px-3 py-1 transition-colors hover:bg-muted {filters.sort === 'client_name' ? 'bg-muted font-medium text-foreground' : ''}"
+			class="rounded-full px-3 py-1 transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none {filters.sort === 'client_name' ? 'bg-muted font-medium text-foreground' : ''}"
 		>
 			Name{sortIcon('client_name')}
 		</button>
 		<button
 			onclick={() => setSort('total_amount')}
-			class="rounded-full px-3 py-1 transition-colors hover:bg-muted {filters.sort === 'total_amount' ? 'bg-muted font-medium text-foreground' : ''}"
+			class="rounded-full px-3 py-1 transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none {filters.sort === 'total_amount' ? 'bg-muted font-medium text-foreground' : ''}"
 		>
 			Amount{sortIcon('total_amount')}
 		</button>
@@ -393,7 +312,7 @@
 
 					<!-- Divider + Actions -->
 					{#if booking.receipt_url || (booking.client_phone && ['CONFIRMED', 'FULLY_PAID'].includes(booking.status))}
-						<div class="border-border border-t"></div>
+						<Separator />
 						<div class="flex gap-2">
 					<ReceiptButtons depositReceiptUrl={booking.receipt_url} balanceReceiptUrl={booking.balance_receipt_url} />
 							{#if booking.client_phone && ['CONFIRMED', 'FULLY_PAID'].includes(booking.status)}
@@ -421,7 +340,7 @@
 					type="button"
 					disabled={bookingsResult.page <= 1}
 					onclick={() => goToPage(bookingsResult.page - 1)}
-					class="inline-flex items-center justify-center rounded-full px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-40 {bookingsResult.page <= 1 ? 'text-muted-foreground' : 'bg-muted hover:bg-muted/80 text-foreground'}"
+					class="inline-flex items-center justify-center rounded-full px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-40 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none {bookingsResult.page <= 1 ? 'text-muted-foreground' : 'bg-muted hover:bg-muted/80 text-foreground'}"
 				>
 					<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
 					Previous
@@ -440,7 +359,7 @@
 						<button
 							type="button"
 							onclick={() => goToPage(pageNum)}
-							class="inline-flex h-8 w-8 items-center justify-center rounded-full text-xs font-medium transition-colors {pageNum === bookingsResult.page ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted'}"
+							class="inline-flex h-8 w-8 items-center justify-center rounded-full text-xs font-medium transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none {pageNum === bookingsResult.page ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted'}"
 						>
 							{pageNum}
 						</button>
@@ -451,7 +370,7 @@
 					type="button"
 					disabled={bookingsResult.page >= bookingsResult.totalPages}
 					onclick={() => goToPage(bookingsResult.page + 1)}
-					class="inline-flex items-center justify-center rounded-full px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-40 {bookingsResult.page >= bookingsResult.totalPages ? 'text-muted-foreground' : 'bg-muted hover:bg-muted/80 text-foreground'}"
+					class="inline-flex items-center justify-center rounded-full px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-40 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none {bookingsResult.page >= bookingsResult.totalPages ? 'text-muted-foreground' : 'bg-muted hover:bg-muted/80 text-foreground'}"
 				>
 					Next
 					<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
@@ -462,78 +381,4 @@
 </div>
 
 <!-- View Details Dialog -->
-{#if selectedBooking}
-	<Dialog.Root bind:open={showDetailsDialog}>
-		<Dialog.Content class="max-w-md rounded-xl">
-			<Dialog.Header>
-				<Dialog.Title>Payment details</Dialog.Title>
-				<Dialog.Description>
-					Breakdown for {selectedBooking.client_name || 'client'}
-					{#if selectedBooking.event_date}
-						· {fmtDate(selectedBooking.event_date)}
-					{/if}
-				</Dialog.Description>
-			</Dialog.Header>
-
-			<div class="space-y-3">
-				{#if selectedBooking.packages?.name}
-					<div class="flex items-center justify-between text-sm">
-						<span class="text-muted-foreground">Package</span>
-						<span class="font-medium">{selectedBooking.packages.emoji} {selectedBooking.packages.name}</span>
-					</div>
-				{/if}
-
-				{#if selectedBooking.packages?.price}
-					<div class="flex items-center justify-between text-sm">
-						<span class="text-muted-foreground">Base price</span>
-						<span class="font-medium tabular-nums">{fmtCurrency(selectedBooking.packages.price)}</span>
-					</div>
-				{/if}
-
-				{#if selectedBooking.invites?.transport_fee_override > 0}
-					<div class="flex items-center justify-between text-sm">
-						<span class="text-muted-foreground">Transport fee</span>
-						<span class="font-medium tabular-nums">{fmtCurrency(selectedBooking.invites.transport_fee_override)}</span>
-					</div>
-				{/if}
-
-				{#if selectedBooking.invites?.custom_surcharge > 0}
-					<div class="space-y-0.5">
-						<div class="flex items-center justify-between text-sm">
-							<span class="text-muted-foreground">Extra surcharge</span>
-							<span class="font-medium tabular-nums">{fmtCurrency(selectedBooking.invites.custom_surcharge)}</span>
-						</div>
-						{#if selectedBooking.invites.surcharge_remark}
-							<p class="text-right text-xs text-muted-foreground">{selectedBooking.invites.surcharge_remark}</p>
-						{/if}
-					</div>
-				{/if}
-
-				<div class="bg-border h-px w-full"></div>
-
-				<div class="flex items-center justify-between text-sm">
-					<span class="text-muted-foreground">Total amount</span>
-					<span class="font-bold tabular-nums">{fmtCurrency(selectedBooking.total_amount)}</span>
-				</div>
-
-				<div class="flex items-center justify-between text-sm">
-					<span class="text-muted-foreground">Deposit paid</span>
-					<span class="font-medium tabular-nums text-green-600 dark:text-green-400">{fmtCurrency(selectedBooking.deposit_amount)}</span>
-				</div>
-
-				{#if selectedBooking.balance_amount > 0}
-					<div class="flex items-center justify-between text-sm">
-						<span class="text-muted-foreground">Balance remaining</span>
-						<span class="font-medium tabular-nums">{fmtCurrency(selectedBooking.balance_amount)}</span>
-					</div>
-				{/if}
-			</div>
-
-			<Dialog.Footer>
-				<Dialog.Close class="inline-flex items-center justify-center rounded-full bg-muted px-4 py-2 text-xs font-medium text-muted-foreground hover:bg-muted/80 transition-colors">
-					Close
-				</Dialog.Close>
-			</Dialog.Footer>
-		</Dialog.Content>
-	</Dialog.Root>
-{/if}
+<BookingDetailDialog bind:open={showDetailsDialog} booking={selectedBooking} />

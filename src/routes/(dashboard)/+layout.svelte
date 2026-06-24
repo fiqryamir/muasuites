@@ -43,10 +43,15 @@
 	}
 
 	const navLinks = [
-		{ href: '/bookings', label: 'Dashboard' },
-		{ href: '/bookings/all', label: 'All bookings' },
-		{ href: '/settings', label: 'Settings' }
+		{ href: '/bookings', label: 'Dashboard', mobileLabel: 'Dashboard' },
+		{ href: '/bookings/all', label: 'All bookings', mobileLabel: 'All' },
+		{ href: '/settings', label: 'Settings', mobileLabel: 'Settings' }
 	];
+
+	// Use shorter labels on mobile (<640px) to fit all nav items
+	function navLabel(link: typeof navLinks[0]) {
+		return link.mobileLabel;
+	}
 </script>
 
 {#if loading}
@@ -74,10 +79,10 @@
 							class="rounded-md px-2 py-1.5 text-xs font-medium transition-colors sm:px-3 sm:text-sm
 								{active
 									? 'bg-muted text-foreground'
-									: 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'}
-								{link.href === '/bookings/all' ? 'hidden sm:inline-flex' : ''}"
+									: 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'}"
 						>
-							{link.label}
+							<span class="sm:hidden">{navLabel(link)}</span>
+							<span class="hidden sm:inline">{link.label}</span>
 						</a>
 					{/each}
 
