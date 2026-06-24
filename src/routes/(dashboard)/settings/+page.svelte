@@ -66,6 +66,9 @@
 	let defaultBufferMinutesStr = $state('0');
 	let defaultBufferMinutes = $derived(parseInt(defaultBufferMinutesStr, 10));
 
+	// Balance payment cutoff
+	let balanceDueDays = $state(3);
+
 	// Package form state
 	let pkgEmoji = $state('💄');
 	let pkgName = $state('');
@@ -151,6 +154,7 @@
 			whEndPeriod = end.period;
 
 			defaultBufferMinutesStr = String(conf.default_buffer_minutes ?? 0);
+			balanceDueDays = conf.balance_due_days_before ?? 3;
 		}
 
 		const { data: pkgs } = await supabase
@@ -242,7 +246,8 @@
 				duitnow_qr_url: finalQrUrl,
 				working_hours_start: workingHoursStart,
 				working_hours_end: workingHoursEnd,
-				default_buffer_minutes: defaultBufferMinutes
+				default_buffer_minutes: defaultBufferMinutes,
+				balance_due_days_before: balanceDueDays
 			})
 			.eq('mua_id', userId);
 
@@ -602,6 +607,22 @@
 								</div>
 							</Field>
 						</FieldGroup>
+
+						<Field class="gap-2">
+							<FieldLabel>Balance payment cutoff</FieldLabel>
+							<div class="flex items-center gap-2">
+								<Input
+									id="balance_due_days"
+									type="number"
+									min="0"
+									max="30"
+									bind:value={balanceDueDays}
+									class="w-24 rounded-full bg-muted border-none px-4"
+								/>
+								<span class="text-sm text-muted-foreground">days before event</span>
+							</div>
+							<p class="px-2 text-xs text-muted-foreground">Client must pay the remaining balance by this cutoff. Overdue notices are sent via Telegram.</p>
+						</Field>
 
 						<Field class="gap-2">
 							<FieldLabel>Travel buffer between sessions</FieldLabel>

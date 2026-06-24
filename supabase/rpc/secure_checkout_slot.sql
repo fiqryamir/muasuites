@@ -118,7 +118,7 @@ BEGIN
   FROM public.bookings
   WHERE mua_id = p_mua_id
     AND event_date >= CURRENT_DATE
-    AND status IN ('CONFIRMED', 'PENDING_APPROVAL', 'CHECKING_OUT')
+    AND status IN ('CONFIRMED', 'FULLY_PAID', 'PENDING_APPROVAL', 'CHECKING_OUT')
     AND NOT (status = 'CHECKING_OUT' AND locked_at < NOW() - INTERVAL '10 minutes');
 
   -- 8. Enforce capacity limits based on subscription plan
@@ -143,7 +143,7 @@ BEGIN
     JOIN public.packages p ON p.id = b.package_id
     WHERE b.mua_id = p_mua_id
       AND b.event_date = p_event_date
-      AND b.status IN ('CONFIRMED', 'PENDING_APPROVAL', 'CHECKING_OUT')
+      AND b.status IN ('CONFIRMED', 'FULLY_PAID', 'PENDING_APPROVAL', 'CHECKING_OUT')
       AND NOT (b.status = 'CHECKING_OUT' AND b.locked_at < NOW() - INTERVAL '10 minutes')
   )
   SELECT COUNT(*) INTO v_overlap_count

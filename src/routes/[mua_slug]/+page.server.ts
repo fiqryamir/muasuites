@@ -48,7 +48,7 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 		.select('event_date, event_time, status, locked_at, client_name, packages!inner(name, emoji, duration_hours)')
 		.eq('mua_id', muaId)
 		.gte('event_date', todayString)
-		.or(`status.in.("CONFIRMED","PENDING_APPROVAL"),and(status.eq.CHECKING_OUT,locked_at.gt.${tenMinutesAgo})`);
+		.or(`status.in.("CONFIRMED","FULLY_PAID","PENDING_APPROVAL"),and(status.eq.CHECKING_OUT,locked_at.gt.${tenMinutesAgo})`);
 
 	// Group bookings by date into DaySlot arrays
 	const daySlots: Record<string, DaySlot[]> = {};

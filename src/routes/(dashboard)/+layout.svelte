@@ -43,7 +43,8 @@
 	}
 
 	const navLinks = [
-		{ href: '/bookings', label: 'Bookings' },
+		{ href: '/bookings', label: 'Dashboard' },
+		{ href: '/bookings/all', label: 'All bookings' },
 		{ href: '/settings', label: 'Settings' }
 	];
 </script>
@@ -65,25 +66,26 @@
 					MUASuites
 				</a>
 
-				<nav class="flex items-center gap-1">
+				<nav class="flex items-center gap-0.5 sm:gap-1">
 					{#each navLinks as link}
 						{@const active = currentPath.startsWith(link.href)}
 						<a
 							href={link.href}
-							class="rounded-md px-3 py-1.5 text-sm font-medium transition-colors
+							class="rounded-md px-2 py-1.5 text-xs font-medium transition-colors sm:px-3 sm:text-sm
 								{active
 									? 'bg-muted text-foreground'
-									: 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'}"
+									: 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'}
+								{link.href === '/bookings/all' ? 'hidden sm:inline-flex' : ''}"
 						>
 							{link.label}
 						</a>
 					{/each}
 
-					<div class="mx-1.5 h-4 w-px bg-border"></div>
+					<div class="mx-1 h-4 w-px bg-border sm:mx-1.5"></div>
 
 					<button
 						onclick={handleLogout}
-						class="rounded-md px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:text-destructive"
+						class="rounded-md px-2 py-1.5 text-xs text-muted-foreground transition-colors sm:px-3 sm:text-sm hover:text-destructive"
 					>
 						Log out
 					</button>

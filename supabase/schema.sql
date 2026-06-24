@@ -26,6 +26,7 @@ CREATE TABLE public.mua_configs (
   working_hours_end time without time zone NOT NULL DEFAULT '18:00:00'::time without time zone,
   default_buffer_minutes smallint NOT NULL DEFAULT 0 CHECK (default_buffer_minutes >= 0 AND default_buffer_minutes <= 120),
   max_active_bookings smallint DEFAULT 2 CHECK (max_active_bookings IS NULL OR max_active_bookings >= 1 AND max_active_bookings <= 100),
+  balance_due_days_before smallint NOT NULL DEFAULT 3 CHECK (balance_due_days_before >= 0 AND balance_due_days_before <= 30),
   CONSTRAINT mua_configs_pkey PRIMARY KEY (mua_id),
   CONSTRAINT mua_configs_mua_id_fkey FOREIGN KEY (mua_id) REFERENCES public.muas(id)
 );
@@ -63,6 +64,7 @@ CREATE TABLE public.invites (
   expires_at timestamp with time zone NOT NULL,
   created_at timestamp with time zone NOT NULL DEFAULT now(),
   buffer_minutes_override smallint CHECK (buffer_minutes_override IS NULL OR buffer_minutes_override >= 0 AND buffer_minutes_override <= 120),
+  balance_due_days_before_override smallint CHECK (balance_due_days_before_override IS NULL OR balance_due_days_before_override >= 0 AND balance_due_days_before_override <= 30),
   CONSTRAINT invites_pkey PRIMARY KEY (id),
   CONSTRAINT invites_mua_id_fkey FOREIGN KEY (mua_id) REFERENCES public.muas(id),
   CONSTRAINT invites_package_id_fkey FOREIGN KEY (package_id) REFERENCES public.packages(id)
@@ -89,6 +91,10 @@ CREATE TABLE public.bookings (
   locked_at timestamp with time zone NOT NULL DEFAULT now(),
   created_at timestamp with time zone NOT NULL DEFAULT now(),
   updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  balance_due_date date,
+  balance_token uuid DEFAULT gen_random_uuid() UNIQUE,
+  balance_receipt_url text,
+  last_overdue_notified_at timestamp with time zone,
   CONSTRAINT bookings_pkey PRIMARY KEY (id),
   CONSTRAINT bookings_mua_id_fkey FOREIGN KEY (mua_id) REFERENCES public.muas(id),
   CONSTRAINT bookings_invite_id_fkey FOREIGN KEY (invite_id) REFERENCES public.invites(id),
@@ -97,4 +103,32 @@ CREATE TABLE public.bookings (
 CREATE TABLE public.schema_migrations (
   version character varying NOT NULL,
   CONSTRAINT schema_migrations_pkey PRIMARY KEY (version)
+);
+
+CREATE TYPE public.plan_type AS ENUM (
+  'FREE', 
+  'PRO', 
+  'ELITE'
+);
+
+CREATE TYPE public.booking_status AS ENUM (
+  'CHECKING_OUT', 
+  'PENDING_APPROVAL', 
+  'CONFIRMED', 
+  'REJECTED', 
+  'FULLY_PAID', 
+  'EXPIRED', 
+  'CANCELLED', 
+  'COMPLETED'
+);
+
+CREATE TYPE public.deposit_mode AS ENUM (
+  'FIXED', 
+  'PERCENT'
+);
+
+CREATE TYPE public.transport_type AS ENUM (
+  'PER_KM', 
+  'FLAT', 
+  'ZONES'
 );

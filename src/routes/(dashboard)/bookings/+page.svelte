@@ -15,6 +15,8 @@
 	import * as Select from '$lib/components/ui/select';
 	import { Field, FieldGroup, FieldLabel } from '$lib/components/ui/field';
 	import * as Dialog from '$lib/components/ui/dialog';
+	import ReceiptButtons from '$lib/components/ui/receipt-buttons.svelte';
+	import WhatsAppRemind from '$lib/components/ui/whatsapp-remind.svelte';
 
 	let supabase = $derived(page.data.supabase);
 	let session = $derived(page.data.session);
@@ -46,11 +48,10 @@
 	let depositValueOverride = $state<number | null>(null);
 	let bufferMinutesOverrideStr = $state('');
 	let bufferMinutesOverride = $derived(bufferMinutesOverrideStr === '' ? null : parseInt(bufferMinutesOverrideStr, 10));
+	let balanceDueDaysOverrideStr = $state('');
+	let balanceDueDaysOverride = $derived(balanceDueDaysOverrideStr === '' ? null : parseInt(balanceDueDaysOverrideStr, 10));
 	let generatedUrl = $state('');
 	let generating = $state(false);
-
-	// Collapsible history
-	let showPast = $state(false);
 
 	const todayStr = new Date().toISOString().split('T')[0];
 
@@ -58,7 +59,7 @@
 		bookings.filter((b) => b.status === 'PENDING_APPROVAL')
 	);
 
-	const upcomingBookings = $derived(
+	const upcomingBookingsAll = $derived(
 		bookings.filter(
 			(b) =>
 				['CONFIRMED', 'FULLY_PAID'].includes(b.status) &&
@@ -66,19 +67,17 @@
 		)
 	);
 
-	const pastBookings = $derived(
-		bookings.filter(
-			(b) => b.event_date < todayStr || b.status === 'REJECTED'
-		)
-	);
+	const upcomingBookings = $derived(upcomingBookingsAll.slice(0, 5));
 
 	const activeBookingsCount = $derived(
 		bookings.filter(
 			(b) =>
 				b.event_date >= todayStr &&
-				['CONFIRMED', 'PENDING_APPROVAL', 'CHECKING_OUT'].includes(b.status)
+				['CONFIRMED', 'FULLY_PAID', 'PENDING_APPROVAL', 'CHECKING_OUT'].includes(b.status)
 		).length
 	);
+
+	const atCapacity = $derived(muaPlan === 'FREE' && activeBookingsCount >= 2);
 
 	// Greeting based on time of day
 	const greeting = $derived.by(() => {
@@ -152,6 +151,46 @@
 		const parts = name.trim().split(/\s+/);
 		if (parts.length === 1) return parts[0].charAt(0).toUpperCase();
 		return (parts[0].charAt(0) + parts[parts.length - 1].charAt(0)).toUpperCase();
+	}
+
+	function relativeTime(dateStr: string): string {
+		if (!dateStr) return '';
+		const now = new Date();
+		const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+		const date = new Date(dateStr + 'T00:00:00');
+		const diffMs = date.getTime() - today.getTime();
+		const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24));
+		if (diffDays === 0) return 'today';
+		if (diffDays === 1) return 'tomorrow';
+		if (diffDays === -1) return 'yesterday';
+		if (diffDays > 0) return `in ${diffDays} days`;
+		return `${Math.abs(diffDays)} days ago`;
+	}
+
+	function statusLabel(status: string): string {
+		const labels: Record<string, string> = {
+			PENDING_APPROVAL: 'Needs review',
+			CONFIRMED: 'Confirmed',
+			FULLY_PAID: 'Fully paid',
+			CHECKING_OUT: 'Checking out',
+			EXPIRED: 'Expired',
+			CANCELLED: 'Cancelled',
+			COMPLETED: 'Completed'
+		};
+		return labels[status] || status;
+	}
+
+	function statusColor(status: string): string {
+		const colors: Record<string, string> = {
+			PENDING_APPROVAL: 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300',
+			CONFIRMED: 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300',
+			FULLY_PAID: 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300',
+			CHECKING_OUT: 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300',
+			EXPIRED: 'bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-300',
+			CANCELLED: 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300',
+			COMPLETED: 'bg-muted text-muted-foreground'
+		};
+		return colors[status] || 'bg-muted text-muted-foreground';
 	}
 
 	onMount(async () => {
@@ -231,6 +270,7 @@
 				deposit_mode_override: depositValueOverride !== null ? depositModeOverride : null,
 				deposit_value_override: depositValueOverride !== null ? depositValueOverride : null,
 				buffer_minutes_override: bufferMinutesOverride,
+				balance_due_days_before_override: balanceDueDaysOverride,
 				is_used: false,
 				expires_at: expires.toISOString()
 			})
@@ -262,19 +302,77 @@
 		depositValueOverride = null;
 	}
 
-	async function handleApprove(booking: any) {
-		if (!confirm(`Approve payment from ${booking.client_name || 'this client'}?`)) return;
+	async function handleReject(booking: any) {
+		if (!confirm(`Reject deposit from ${booking.client_name || 'this client'}? This will cancel the booking.`)) return;
 
 		const { error } = await supabase
 			.from('bookings')
-			.update({ status: 'CONFIRMED' })
+			.update({ status: 'CANCELLED' })
 			.eq('id', booking.id);
 
 		if (error) {
-			toast.error('Approval failed: ' + error.message);
+			toast.error('Rejection failed: ' + error.message);
 		} else {
-			toast.success('Booking confirmed.');
+			toast.success('Booking rejected.');
 			await loadBookings();
+		}
+	}
+
+	async function handleApprove(booking: any) {
+		if (!confirm(`Approve payment from ${booking.client_name || 'this client'}?`)) return;
+
+		// Compute balance_due_date: event_date - balance_due_days_before
+		if (booking.balance_amount > 0) {
+			// Fetch MUA's configured cutoff from mua_configs
+			const { data: cfg } = await supabase
+				.from('mua_configs')
+				.select('balance_due_days_before')
+				.eq('mua_id', userId)
+				.single();
+			const dueDays = cfg?.balance_due_days_before ?? 3;
+
+			const eventDate = new Date(booking.event_date + 'T00:00:00');
+			const dueDate = new Date(eventDate);
+			dueDate.setDate(dueDate.getDate() - dueDays);
+			const dueDateStr = dueDate.toISOString().split('T')[0];
+
+			// Generate a balance token for the payment page
+			const balanceToken = crypto.randomUUID();
+
+			const { error } = await supabase
+				.from('bookings')
+				.update({
+					status: 'CONFIRMED',
+					balance_due_date: dueDateStr,
+					balance_token: balanceToken
+				})
+				.eq('id', booking.id);
+
+			if (error) {
+				toast.error('Approval failed: ' + error.message);
+			} else {
+				toast.success('Booking confirmed.');
+				// Notify MUA via Telegram about balance link
+				fetch('/api/notify-balance', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ bookingId: booking.id, balanceToken })
+				}).catch(() => {});
+				await loadBookings();
+			}
+		} else {
+			// No balance — just confirm directly
+			const { error } = await supabase
+				.from('bookings')
+				.update({ status: 'CONFIRMED' })
+				.eq('id', booking.id);
+
+			if (error) {
+				toast.error('Approval failed: ' + error.message);
+			} else {
+				toast.success('Booking confirmed.');
+				await loadBookings();
+			}
 		}
 	}
 
@@ -323,19 +421,19 @@
 
 		<!-- Stat cards -->
 		<div class="grid grid-cols-3 gap-3">
-			<div class="rounded-xl bg-muted/40 p-3 text-center sm:p-4">
+			<div class="rounded-xl bg-muted/40 p-3 text-center ring-1 ring-foreground/10 sm:p-4">
 				<p class="text-xl font-semibold tabular-nums sm:text-2xl">
 					{pendingBookings.length}
 				</p>
 				<p class="mt-0.5 text-xs text-muted-foreground">Needs review</p>
 			</div>
-			<div class="rounded-xl bg-muted/40 p-3 text-center sm:p-4">
+			<div class="rounded-xl bg-muted/40 p-3 text-center ring-1 ring-foreground/10 sm:p-4">
 				<p class="text-xl font-semibold tabular-nums sm:text-2xl">
 					{upcomingBookings.length}
 				</p>
 				<p class="mt-0.5 text-xs text-muted-foreground">Confirmed</p>
 			</div>
-			<div class="rounded-xl bg-muted/40 p-3 text-center sm:p-4">
+			<div class="rounded-xl bg-muted/40 p-3 text-center ring-1 ring-foreground/10 sm:p-4">
 				<p class="text-xl font-semibold tabular-nums sm:text-2xl">
 					{activeBookingsCount}<span
 						class="text-sm font-normal text-muted-foreground"
@@ -348,27 +446,40 @@
 			</div>
 		</div>
 
-		<!-- Create link button (always visible) -->
-		<div>
-			<Button
-				variant={showGenerator ? 'outline' : 'default'}
-				onclick={() => {
-					if (showGenerator) {
-						resetGenerator();
-					} else {
-						showGenerator = true;
-					}
-				}}
-				class="gap-1.5"
-			>
-				{#if showGenerator}
-					Close
-				{:else}
-					<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
-					Create link
-				{/if}
-			</Button>
-		</div>
+		{#if atCapacity}
+			<!-- Capacity limit reached: show upgrade prompt -->
+			<div class="rounded-xl border border-border bg-muted/30 p-4 text-center space-y-2">
+				<div class="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-muted">
+					<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-muted-foreground"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+				</div>
+				<p class="text-sm font-medium">Free plan limit reached</p>
+				<p class="text-xs text-muted-foreground max-w-xs mx-auto">
+					You've reached the 2-booking limit on the free plan. Upgrade to Pro or Elite to accept more bookings.
+				</p>
+			</div>
+		{:else}
+			<!-- Create link button -->
+			<div>
+				<Button
+					variant={showGenerator ? 'outline' : 'default'}
+					onclick={() => {
+						if (showGenerator) {
+							resetGenerator();
+						} else {
+							showGenerator = true;
+						}
+					}}
+					class="gap-1.5"
+				>
+					{#if showGenerator}
+						Close
+					{:else}
+						<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+						Create link
+					{/if}
+				</Button>
+			</div>
+		{/if}
 
 		<!-- Generator Panel -->
 		{#if showGenerator}
@@ -444,52 +555,68 @@
 									</InputGroup>
 								</Field>
 
-							<Field class="gap-2">
-								<FieldLabel>Custom surcharge</FieldLabel>
-								<InputGroup>
-									<InputGroupAddon>
-										<InputGroupText class="text-muted-foreground"
-											>RM</InputGroupText
-										>
-									</InputGroupAddon>
-									<InputGroupInput
-										id="surcharge"
-										type="number"
-										step="0.01"
-										placeholder="0.00"
-										bind:value={customSurcharge}
+								<Field class="gap-2">
+									<FieldLabel>Custom surcharge</FieldLabel>
+									<InputGroup>
+										<InputGroupAddon>
+											<InputGroupText class="text-muted-foreground"
+												>RM</InputGroupText
+											>
+										</InputGroupAddon>
+										<InputGroupInput
+											id="surcharge"
+											type="number"
+											step="0.01"
+											placeholder="0.00"
+											bind:value={customSurcharge}
+										/>
+									</InputGroup>
+								</Field>
+
+								<Field class="gap-2">
+									<FieldLabel>Surcharge remark</FieldLabel>
+									<Input
+										id="remark"
+										placeholder="e.g., early morning surcharge, holiday fee"
+										bind:value={surchargeRemark}
 									/>
-								</InputGroup>
-							</Field>
+								</Field>
+
+								<!-- Buffer Override -->
+								<Field class="gap-2">
+									<FieldLabel>Buffer override <span class="font-normal text-muted-foreground">(optional)</span></FieldLabel>
+									<Select.Root type="single" bind:value={bufferMinutesOverrideStr}>
+										<Select.Trigger id="buffer_override" class="flex h-10 w-full items-center justify-between rounded-full border-none bg-muted px-4 py-2 text-sm ring-offset-background focus:ring-2 focus:ring-ring">
+											{bufferMinutesOverride === null ? 'Use default' : bufferMinutesOverride === 0 ? 'No buffer' : `${bufferMinutesOverride} min`}
+										</Select.Trigger>
+										<Select.Content>
+											<Select.Item value="">Use default</Select.Item>
+											<Select.Item value="0">No buffer</Select.Item>
+											<Select.Item value="15">15 min</Select.Item>
+											<Select.Item value="30">30 min</Select.Item>
+											<Select.Item value="45">45 min</Select.Item>
+											<Select.Item value="60">60 min</Select.Item>
+										</Select.Content>
+									</Select.Root>
+									<p class="px-2 text-xs text-muted-foreground">Override the MUA's default travel buffer for this client.</p>
+								</Field>
+							</FieldGroup>
 
 							<Field class="gap-2">
-								<FieldLabel>Surcharge remark</FieldLabel>
-								<Input
-								id="remark"
-								placeholder="e.g., early morning surcharge, holiday fee"
-								bind:value={surchargeRemark}
-							/>
+								<FieldLabel>Balance cutoff override <span class="font-normal text-muted-foreground">(optional)</span></FieldLabel>
+								<div class="flex items-center gap-2">
+									<Input
+										id="balance_due_override"
+										type="number"
+										min="0"
+										max="30"
+										placeholder="Use default"
+										bind:value={balanceDueDaysOverrideStr}
+										class="w-36 rounded-full bg-muted border-none px-4"
+									/>
+									<span class="text-sm text-muted-foreground">days before event</span>
+								</div>
 							</Field>
-
-							<!-- Buffer Override -->
-							<Field class="gap-2">
-								<FieldLabel>Buffer override <span class="font-normal text-muted-foreground">(optional)</span></FieldLabel>
-								<Select.Root type="single" bind:value={bufferMinutesOverrideStr}>
-									<Select.Trigger id="buffer_override" class="flex h-10 w-full items-center justify-between rounded-full border-none bg-muted px-4 py-2 text-sm ring-offset-background focus:ring-2 focus:ring-ring">
-										{bufferMinutesOverride === null ? 'Use default' : bufferMinutesOverride === 0 ? 'No buffer' : `${bufferMinutesOverride} min`}
-									</Select.Trigger>
-									<Select.Content>
-										<Select.Item value="">Use default</Select.Item>
-										<Select.Item value="0">No buffer</Select.Item>
-										<Select.Item value="15">15 min</Select.Item>
-										<Select.Item value="30">30 min</Select.Item>
-										<Select.Item value="45">45 min</Select.Item>
-										<Select.Item value="60">60 min</Select.Item>
-									</Select.Content>
-								</Select.Root>
-								<p class="px-2 text-xs text-muted-foreground">Override the MUA's default travel buffer for this client.</p>
-							</Field>
-						</FieldGroup>
 
 							<div class="bg-border h-px w-full"></div>
 
@@ -502,8 +629,8 @@
 									</FieldLabel>
 									<Select.Root type="single" bind:value={depositModeOverride}>
 										<Select.Trigger id="dep_mode" class="flex h-10 w-full items-center justify-between rounded-full border-none bg-muted px-4 py-2 text-sm ring-offset-background focus:ring-2 focus:ring-ring">
-											{depositModeOverride === 'FIXED' ? 'Fixed Amount (RM)' : 
-											 depositModeOverride === 'PERCENT' ? 'Percentage (%)' : 
+											{depositModeOverride === 'FIXED' ? 'Fixed Amount (RM)' :
+											 depositModeOverride === 'PERCENT' ? 'Percentage (%)' :
 											 'Select mode'}
 										</Select.Trigger>
 										<Select.Content>
@@ -512,7 +639,7 @@
 										</Select.Content>
 									</Select.Root>
 								</Field>
-							
+
 								<!-- Deposit Value Input -->
 								<Field class="gap-2">
 									<FieldLabel>
@@ -524,7 +651,7 @@
 												<InputGroupText class="text-muted-foreground">RM</InputGroupText>
 											</InputGroupAddon>
 										{/if}
-							
+
 										<InputGroupInput
 											id="dep_val"
 											type="number"
@@ -532,7 +659,7 @@
 											placeholder="Leave empty for default"
 											bind:value={depositValueOverride}
 										/>
-							
+
 										{#if depositModeOverride === 'PERCENT'}
 											<InputGroupAddon>
 												<InputGroupText class="text-muted-foreground">%</InputGroupText>
@@ -554,7 +681,7 @@
 		{/if}
 
 		<!-- Empty state when nothing exists -->
-		{#if bookings.length === 0 && !showGenerator}
+		{#if bookings.length === 0 && !showGenerator && !atCapacity}
 			<div class="rounded-xl border border-dashed border-border py-14 text-center space-y-3">
 				<div class="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-muted text-xl">
 					📅
@@ -585,20 +712,23 @@
 					</h2>
 
 					<div class="space-y-3">
-						{#each pendingBookings as booking}
-							<div class="bg-card text-card-foreground rounded-xl p-4 space-y-4">
-								<!-- Header: avatar + name + price -->
+						{#each pendingBookings as booking, i}
+							<div class="bg-card text-card-foreground ring-1 ring-foreground/10 rounded-xl p-4 space-y-4">
+								<!-- Header: avatar + name + price + status pill -->
 								<div class="flex items-start justify-between gap-3">
 									<div class="flex items-center gap-3 min-w-0">
-										<div class="bg-primary/10 text-primary flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-xs font-semibold">
+										<div class="bg-muted text-muted-foreground flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-xs font-semibold">
 											{getInitials(booking.client_name)}
 										</div>
-							<div class="min-w-0">
-								<p class="text-sm font-semibold truncate">{booking.client_name || 'Anonymous'}</p>
-							</div>
+										<div class="min-w-0">
+											<p class="text-sm font-semibold truncate">{booking.client_name || 'Client'}</p>
+											<span class="inline-block mt-1 rounded-full px-2.5 py-0.5 text-xs font-medium {statusColor(booking.status)}">
+												{statusLabel(booking.status)}
+											</span>
+										</div>
 									</div>
 									<div class="shrink-0 text-right">
-										<p class="text-[11px] text-muted-foreground">Deposit</p>
+										<p class="text-xs text-muted-foreground">Deposit</p>
 										<p class="text-base font-bold tabular-nums">{fmtCurrency(booking.deposit_amount)}</p>
 									</div>
 								</div>
@@ -614,27 +744,29 @@
 											{:else if booking.event_time}
 												· {fmtTime(booking.event_time)}
 											{/if}
+											· {relativeTime(booking.event_date)}
 										</span>
 									{/if}
-								{#if booking.venue_address}
-									<span class="inline-flex items-center gap-1.5 rounded-full border border-border px-3 py-1 text-xs text-muted-foreground truncate max-w-[200px]">
-										<svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>
-										{booking.venue_address}
-									</span>
-								{/if}
-								{#if booking.packages?.name}
-									<span class="inline-flex items-center gap-1.5 rounded-full border border-border px-3 py-1 text-xs text-muted-foreground">
-										{booking.packages.emoji} {booking.packages.name}
-									</span>
-								{/if}
-								<button
-									type="button"
-									onclick={() => openDetails(booking)}
-									class="inline-flex items-center gap-1.5 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted transition-colors cursor-pointer"
-								>
-									<svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
-									Details
-								</button>
+									{#if booking.venue_address}
+										<span class="inline-flex items-center gap-1.5 rounded-full border border-border px-3 py-1 text-xs text-muted-foreground truncate max-w-[200px]">
+											<svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>
+											{booking.venue_address}
+										</span>
+									{/if}
+									{#if booking.packages?.name}
+										<span class="inline-flex items-center gap-1.5 rounded-full border border-border px-3 py-1 text-xs text-muted-foreground">
+											{booking.packages.emoji} {booking.packages.name}
+										</span>
+									{/if}
+									<div class="ml-auto"></div>
+									<button
+										type="button"
+										onclick={() => openDetails(booking)}
+										class="inline-flex items-center gap-1.5 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted transition-colors cursor-pointer"
+									>
+										<svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+										Details
+									</button>
 								</div>
 
 								<!-- Divider -->
@@ -642,25 +774,24 @@
 
 							<!-- Actions -->
 							<div class="flex gap-2">
-								{#if booking.receipt_url}
-									<a
-										href={booking.receipt_url}
-										target="_blank"
-										class="border-border text-muted-foreground hover:bg-muted inline-flex flex-1 items-center justify-center gap-2 rounded-full border py-2.5 text-xs font-medium transition-colors"
+								<ReceiptButtons depositReceiptUrl={booking.receipt_url} balanceReceiptUrl={booking.balance_receipt_url} />
+									<button
+										type="button"
+										onclick={() => handleApprove(booking)}
+										class="bg-primary text-primary-foreground inline-flex flex-1 items-center justify-center gap-2 rounded-full py-2.5 text-xs font-medium transition-colors hover:bg-primary/90"
 									>
-										<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>
-										View receipt
-									</a>
-								{/if}
-								<button
-									type="button"
-									onclick={() => handleApprove(booking)}
-									class="bg-primary text-primary-foreground inline-flex flex-1 items-center justify-center gap-2 rounded-full py-2.5 text-xs font-medium transition-colors hover:bg-primary/90"
-								>
-									<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-									Approve
-								</button>
-							</div>
+										<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+										Approve
+									</button>
+									<button
+										type="button"
+										onclick={() => handleReject(booking)}
+										class="border-border text-destructive hover:bg-destructive/10 inline-flex flex-1 items-center justify-center gap-2 rounded-full border py-2.5 text-xs font-medium transition-colors"
+									>
+										<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+										Reject
+									</button>
+								</div>
 							</div>
 						{/each}
 					</div>
@@ -679,22 +810,32 @@
 				{#if upcomingBookings.length > 0}
 					<div class="space-y-3">
 						{#each upcomingBookings as booking}
-							<div class="bg-card text-card-foreground rounded-xl p-4 space-y-4">
-								<!-- Header: avatar + name + price -->
+							{@const todayStr2 = new Date().toISOString().split('T')[0]}
+							{@const _isOverdue = booking.status === 'CONFIRMED' && booking.balance_due_date ? booking.balance_due_date < todayStr2 : false}
+							{@const _overdueDays = _isOverdue && booking.balance_due_date
+								? Math.max(1, Math.ceil((Date.now() - new Date(booking.balance_due_date + 'T00:00:00').getTime()) / (1000 * 60 * 60 * 24)))
+								: 0}
+							<div class="bg-card text-card-foreground ring-1 ring-foreground/10 rounded-xl p-4 space-y-4">
+								<!-- Header: avatar + name + price + status pill -->
 								<div class="flex items-start justify-between gap-3">
 									<div class="flex items-center gap-3 min-w-0">
-										<div class="bg-primary/10 text-primary flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-xs font-semibold">
+										<div class="bg-muted text-muted-foreground flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-xs font-semibold">
 											{getInitials(booking.client_name)}
 										</div>
-							<div class="min-w-0">
-								<p class="text-sm font-semibold truncate">{booking.client_name || 'Client'}</p>
-							</div>
+										<div class="min-w-0">
+											<p class="text-sm font-semibold truncate">{booking.client_name || 'Client'}</p>
+											<span class="inline-block mt-1 rounded-full px-2.5 py-0.5 text-xs font-medium {statusColor(booking.status)}">
+												{statusLabel(booking.status)}
+											</span>
+										</div>
 									</div>
 									<div class="shrink-0 text-right">
 										{#if booking.balance_amount > 0}
-											<p class="text-[11px] text-muted-foreground">Balance due</p>
+											<p class="text-xs {_isOverdue ? 'text-destructive font-medium' : 'text-muted-foreground'}">
+												{_isOverdue ? 'Overdue' : 'Balance due'}
+											</p>
 										{:else}
-											<p class="text-[11px] text-muted-foreground">Total</p>
+											<p class="text-xs text-muted-foreground">Total</p>
 										{/if}
 										<p class="text-base font-bold tabular-nums">{fmtCurrency(booking.total_amount)}</p>
 									</div>
@@ -711,52 +852,62 @@
 											{:else if booking.event_time}
 												· {fmtTime(booking.event_time)}
 											{/if}
+											· {relativeTime(booking.event_date)}
 										</span>
 									{/if}
-								{#if booking.venue_address}
-									<span class="inline-flex items-center gap-1.5 rounded-full border border-border px-3 py-1 text-xs text-muted-foreground truncate max-w-[200px]">
-										<svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>
-										{booking.venue_address}
-									</span>
-								{/if}
-								{#if booking.packages?.name}
-									<span class="inline-flex items-center gap-1.5 rounded-full border border-border px-3 py-1 text-xs text-muted-foreground">
-										{booking.packages.emoji} {booking.packages.name}
-									</span>
-								{/if}
-								<button
-									type="button"
-									onclick={() => openDetails(booking)}
-									class="inline-flex items-center gap-1.5 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted transition-colors cursor-pointer"
-								>
-									<svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
-									Details
-								</button>
+									{#if booking.venue_address}
+										<span class="inline-flex items-center gap-1.5 rounded-full border border-border px-3 py-1 text-xs text-muted-foreground truncate max-w-[200px]">
+											<svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>
+											{booking.venue_address}
+										</span>
+									{/if}
+									{#if booking.packages?.name}
+										<span class="inline-flex items-center gap-1.5 rounded-full border border-border px-3 py-1 text-xs text-muted-foreground">
+											{booking.packages.emoji} {booking.packages.name}
+										</span>
+									{/if}
+									{#if _isOverdue}
+										<span class="inline-flex items-center gap-1.5 rounded-full border border-destructive/20 bg-destructive/5 px-3 py-1 text-xs text-destructive">
+											Overdue · {_overdueDays}d
+										</span>
+									{/if}
+									<div class="ml-auto"></div>
+									<a
+										href={`/api/calendar/${booking.id}?token=${accessToken}`}
+										target="_blank"
+										class="inline-flex items-center gap-1.5 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+									>
+										<svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v4"/><path d="M16 2v4"/><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M3 10h18"/><path d="m9 16 2 2 4-4"/></svg>
+										Calendar
+									</a>
+									<button
+										type="button"
+										onclick={() => openDetails(booking)}
+										class="inline-flex items-center gap-1.5 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted transition-colors cursor-pointer"
+									>
+										<svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+										Details
+									</button>
 								</div>
 
 								<!-- Divider -->
 								<div class="border-border border-t"></div>
 
-								<!-- Actions -->
-								<div class="flex gap-2">
+							<!-- Actions -->
+							<div class="flex gap-2">
+								<ReceiptButtons depositReceiptUrl={booking.receipt_url} balanceReceiptUrl={booking.balance_receipt_url} />
 									{#if booking.client_phone}
-										<a
-											href={`https://wa.me/${booking.client_phone?.replace?.(/^0/, '60') || booking.client_phone}`}
-											target="_blank"
-											class="border-border text-muted-foreground hover:bg-muted inline-flex flex-1 items-center justify-center gap-2 rounded-full border py-2.5 text-xs font-medium transition-colors"
-										>
-											<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
-											WhatsApp
-										</a>
+										<WhatsAppRemind
+											clientPhone={booking.client_phone}
+											clientName={booking.client_name}
+											bookingStatus={booking.status}
+											balanceAmount={booking.balance_amount}
+											balanceToken={booking.balance_token}
+											eventDate={booking.event_date}
+											isOverdue={_isOverdue}
+											overdueDays={_overdueDays}
+										/>
 									{/if}
-									<a
-										href={`/api/calendar/${booking.id}?token=${accessToken}`}
-										target="_blank"
-										class="border-border text-muted-foreground hover:bg-muted inline-flex flex-1 items-center justify-center gap-2 rounded-full border py-2.5 text-xs font-medium transition-colors"
-									>
-										<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v4"/><path d="M16 2v4"/><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M3 10h18"/><path d="m9 16 2 2 4-4"/></svg>
-										Add to calendar
-									</a>
 								</div>
 							</div>
 						{/each}
@@ -768,105 +919,34 @@
 				{/if}
 			</section>
 
-			<!-- Past History (Collapsible) -->
-			{#if pastBookings.length > 0}
-				<section class="space-y-3">
-					<button
-						type="button"
-						onclick={() => (showPast = !showPast)}
-						class="flex w-full items-center justify-between text-sm font-semibold text-muted-foreground hover:text-foreground transition-colors"
+			<!-- View all links -->
+			<section class="space-y-2 pt-1">
+				{#if pendingBookings.length > 0}
+					<a
+						href="/bookings/all?status=PENDING_APPROVAL"
+						class="flex items-center justify-between rounded-xl bg-muted/30 p-3 text-sm text-muted-foreground hover:text-foreground transition-colors ring-1 ring-foreground/10"
 					>
-						<span>
-							History
-							<span class="font-normal">({pastBookings.length})</span>
-						</span>
-						<svg
-							class="h-4 w-4 transition-transform {showPast ? 'rotate-180' : ''}"
-							xmlns="http://www.w3.org/2000/svg"
-							fill="none"
-							viewBox="0 0 24 24"
-							stroke="currentColor"
-							stroke-width="2"
-						>
-							<path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
-						</svg>
-					</button>
-
-					{#if showPast}
-						<div class="space-y-3 animate-in-up">
-						{#each pastBookings as booking}
-							<div class="bg-card text-card-foreground rounded-xl p-4 space-y-4">
-								<!-- Header: avatar + name + price -->
-								<div class="flex items-start justify-between gap-3">
-									<div class="flex items-center gap-3 min-w-0">
-										<div class="bg-primary/10 text-primary flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-xs font-semibold">
-											{getInitials(booking.client_name)}
-										</div>
-										<div class="min-w-0">
-											<p class="text-sm font-medium truncate">{booking.client_name || 'Past client'}</p>
-										</div>
-									</div>
-									<div class="shrink-0 text-right">
-										<p class="text-sm font-semibold tabular-nums">{fmtCurrency(booking.total_amount)}</p>
-									</div>
-								</div>
-
-								<!-- Pill tags -->
-								<div class="flex flex-wrap items-center gap-2">
-									{#if booking.event_date}
-										<span class="inline-flex items-center gap-1.5 rounded-full border border-border px-3 py-1 text-xs text-muted-foreground">
-											<svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v4"/><path d="M16 2v4"/><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M3 10h18"/></svg>
-											{fmtDateShort(booking.event_date)}
-											{#if booking.event_time && booking.packages?.duration_hours}
-												· {fmtTimeRange(booking.event_time, booking.packages.duration_hours)}
-											{:else if booking.event_time}
-												· {fmtTime(booking.event_time)}
-											{/if}
-										</span>
-									{/if}
-									{#if booking.venue_address}
-										<span class="inline-flex items-center gap-1.5 rounded-full border border-border px-3 py-1 text-xs text-muted-foreground truncate max-w-[200px]">
-											<svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>
-											{booking.venue_address}
-										</span>
-									{/if}
-							{#if booking.packages?.name}
-									<span class="inline-flex items-center gap-1.5 rounded-full border border-border px-3 py-1 text-xs text-muted-foreground">
-										{booking.packages.emoji} {booking.packages.name}
-									</span>
-								{/if}
-								<button
-									type="button"
-									onclick={() => openDetails(booking)}
-									class="inline-flex items-center gap-1.5 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted transition-colors cursor-pointer"
-								>
-									<svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
-									Details
-								</button>
-							</div>
-
-							<!-- Divider -->
-							<div class="border-border border-t"></div>
-
-							<!-- Actions -->
-							<div class="flex gap-2">
-								{#if booking.receipt_url}
-									<a
-										href={booking.receipt_url}
-										target="_blank"
-										class="border-border text-muted-foreground hover:bg-muted inline-flex flex-1 items-center justify-center gap-2 rounded-full border py-2.5 text-xs font-medium transition-colors"
-									>
-										<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>
-										View receipt
-									</a>
-								{/if}
-							</div>
-							</div>
-						{/each}
-						</div>
-					{/if}
-				</section>
-			{/if}
+						<span>View all needs review</span>
+						<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+					</a>
+				{/if}
+				{#if upcomingBookingsAll.length > 5}
+					<a
+						href="/bookings/all?status=CONFIRMED"
+						class="flex items-center justify-between rounded-xl bg-muted/30 p-3 text-sm text-muted-foreground hover:text-foreground transition-colors ring-1 ring-foreground/10"
+					>
+						<span>View all upcoming</span>
+						<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+					</a>
+				{/if}
+				<a
+					href="/bookings/all?status=COMPLETED&sort=event_date&dir=desc"
+					class="flex items-center justify-between rounded-xl bg-muted/30 p-3 text-sm text-muted-foreground hover:text-foreground transition-colors ring-1 ring-foreground/10"
+				>
+					<span>View history</span>
+					<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+				</a>
+			</section>
 		{/if}
 	</div>
 {/if}

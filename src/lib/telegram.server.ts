@@ -39,3 +39,85 @@ export async function sendTelegramAlert(chatId: string | null | undefined, messa
 		}
 	}
 }
+
+/**
+ * Send a Telegram notification to the MUA about a balance payment link being ready.
+ * Called after MUA approves a booking with a balance due.
+ */
+export async function notifyBalanceLinkReady(
+	chatId: string,
+	clientName: string,
+	balanceAmount: number,
+	eventDate: string,
+	balanceUrl: string
+) {
+	const formattedAmount = `RM ${Number(balanceAmount).toLocaleString('en-MY', { minimumFractionDigits: 2 })}`;
+	const message = `
+<b>🔔 Balance Payment Link Ready</b>
+
+<b>Client:</b> ${clientName || 'Client'}
+<b>Event:</b> ${eventDate}
+<b>Balance:</b> ${formattedAmount}
+
+Send this link to the client for balance payment:
+<a href="${balanceUrl}">Open Balance Payment Page</a>
+
+Or copy and share:
+${balanceUrl}
+	`.trim();
+
+	await sendTelegramAlert(chatId, message);
+}
+
+/**
+ * Send a Telegram notification to the MUA that balance has been received and booking is fully paid.
+ */
+export async function notifyBalancePaid(
+	chatId: string,
+	clientName: string,
+	totalAmount: number,
+	eventDate: string,
+	balanceReceiptUrl: string | null
+) {
+	const formattedTotal = `RM ${Number(totalAmount).toLocaleString('en-MY', { minimumFractionDigits: 2 })}`;
+	let message = `
+<b>✅ Booking Fully Paid!</b>
+
+<b>Client:</b> ${clientName || 'Client'}
+<b>Event:</b> ${eventDate}
+<b>Total:</b> ${formattedTotal}
+<b>Status:</b> FULLY_PAID
+	`.trim();
+
+	if (balanceReceiptUrl) {
+		message += `\n\n<a href="${balanceReceiptUrl}">View Balance Receipt</a>`;
+	}
+
+	await sendTelegramAlert(chatId, message);
+}
+
+/**
+ * Send a Telegram reminder about overdue balance.
+ */
+export async function notifyBalanceOverdue(
+	chatId: string,
+	clientName: string,
+	balanceAmount: number,
+	eventDate: string,
+	daysOverdue: number,
+	balanceUrl: string
+) {
+	const formattedAmount = `RM ${Number(balanceAmount).toLocaleString('en-MY', { minimumFractionDigits: 2 })}`;
+	const message = `
+<b>⚠️ Balance Overdue (${daysOverdue} day${daysOverdue !== 1 ? 's' : ''})</b>
+
+<b>Client:</b> ${clientName || 'Client'}
+<b>Event:</b> ${eventDate}
+<b>Balance:</b> ${formattedAmount}
+
+Remind the client to pay:
+<a href="${balanceUrl}">Balance Payment Link</a>
+	`.trim();
+
+	await sendTelegramAlert(chatId, message);
+}

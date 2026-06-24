@@ -52,7 +52,7 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 		.select('event_date, event_time, status, locked_at, invite_id, client_name, packages!inner(name, emoji, duration_hours)')
 		.eq('mua_id', muaId)
 		.gte('event_date', new Date().toISOString().split('T')[0])
-		.or(`status.in.("CONFIRMED","PENDING_APPROVAL"),and(status.eq.CHECKING_OUT,locked_at.gt.${tenMinutesAgo})`);
+		.or(`status.in.("CONFIRMED","FULLY_PAID","PENDING_APPROVAL"),and(status.eq.CHECKING_OUT,locked_at.gt.${tenMinutesAgo})`);
 
 	// Group into daySlots, self-excluding this invite's own CHECKING_OUT
 	const daySlots: Record<string, DaySlot[]> = {};
