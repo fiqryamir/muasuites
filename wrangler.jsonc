@@ -17,7 +17,7 @@
 		{
 			"binding": "MUA_CACHE",
 			"id": "aea3acba8cde4bafa770fd720769c8af",
-			"remote": true
+			"remote": false
 		}
 	]
 }

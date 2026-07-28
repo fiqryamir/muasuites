@@ -215,3 +215,104 @@ All components are built on shadcn-svelte (bits-ui) primitives and Tailwind CSS 
 - **Don't** use `overflow: hidden` on containers holding absolutely-positioned dropdowns — the dropdown clips. Use the native `<dialog>` / popover API or a portal.
 - **Don't** pair two similar fonts (two geometric sans-serifs). If you must add a second family, pick on a contrast axis: serif + sans, humanist + geometric.
 - **Don't** let heading text overflow its container. Test headlines at every breakpoint and reduce clamp max or rewrite copy if they break.
+- **Don't** use hyphens in user-facing copy. Hyphenated modifiers ("auto-calculated", "token-gated", "mobile-first") are an AI tell. Rewrite naturally: "calculated automatically", "protected by your unique link", "built for phones".
+
+## 7. Marketing Surfaces (Landing Page)
+
+The public landing page (`/`) is a marketing surface, not a product surface. Sections 1–6 still govern its foundation, with these deliberate extensions:
+
+- **Atmospheric washes.** The `.landing-wash` utility (soft radial rose/warm gradients) may be used as ambient background behind the hero and final CTA only. It is a wash, never a text effect — the gradient-text ban still applies. Third-party brand colors (WhatsApp, Telegram, DuitNow) may appear **only inside product mockups** for authenticity, never as page chrome.
+- **Display type.** The hero H1 may scale beyond product type sizes (up to `text-6xl`), still Inter Variable, still weight-driven, still sentence case. Section titles stay at `text-3xl–4xl`.
+- **Mockups are product.** Any mockup of the app (chat, checkout, Telegram, calendar) must render the product UI faithfully per sections 1–6 — same tokens, same shapes. The marketing canvas is softer; the product inside it is not.
+- **Motion is ambient.** Slow (≥350ms), gentle, enhances already-visible content, and always respects `prefers-reduced-motion`. Scroll-triggered reveals must never gate content.
+- **Sequenced storytelling** (e.g. the hero frame cycle) uses numbered/labeled steps only because the order carries real information — the booking flow itself.
+
+## 8. Motion System
+
+MUASuites uses spring-based animations for all interactive motion. Springs are interruptible, velocity-aware, and feel alive — unlike fixed-duration CSS transitions which lock out input and feel robotic.
+
+**Design inspiration:** Apple's "Designing Fluid Interfaces" (WWDC 2018) and Zen Browser's hero animation approach.
+
+### Spring Defaults
+
+| Interaction | Damping | Response | Use Case |
+|-------------|---------|----------|----------|
+| Default UI | 1.0 | 0.3s | Cards, modals, standard reveals |
+| Momentum / flick | 0.8 | 0.3s | Swipe gestures, drag releases |
+| Hero text reveal | 1.0 | 0.4s | Staggered text entrance |
+| Scroll reveal | 1.0 | 0.4s | Section fade-in on scroll |
+
+### Implementation
+
+```css
+/* Tailwind utility classes */
+.spring-default { transition: transform 300ms cubic-bezier(0.2, 0.8, 0.2, 1); }
+.spring-bounce { transition: transform 400ms cubic-bezier(0.34, 1.56, 0.64, 1); }
+```
+
+For gesture-driven interactions (hero swipe, carousel), use Motion/Framer Motion:
+```js
+import { animate } from 'motion';
+
+// Critically damped (no overshoot)
+animate(el, { y: 0 }, { type: 'spring', bounce: 0, duration: 0.3 });
+
+// Momentum interaction (slight bounce)
+animate(el, { y: target }, { type: 'spring', bounce: 0.2, duration: 0.4 });
+```
+
+### Rules
+
+- **Always interruptible.** Every animation can be grabbed and reversed mid-flight. Never lock out input during transitions.
+- **Animate from presentation value.** On interrupt, read the element's live on-screen transform and start the new animation from there — never from the logical target.
+- **Respect `prefers-reduced-motion`.** Replace springs with short opacity cross-fades. Keep color/opacity changes that aid comprehension.
+- **Velocity handoff.** When a gesture ends, the animation continues at the finger's exact velocity. No visible seam between dragging and animating.
+
+## 9. Copywriting
+
+MUASuites copy should sound like a human texting a friend — warm, direct, and unpolished in the right ways.
+
+### The No-Hyphen Rule
+
+Avoid hyphens in all user-facing copy. Hyphenated modifiers are an AI-generated tell.
+
+| Avoid | Write Instead |
+|-------|---------------|
+| auto-calculated | calculated automatically |
+| token-gated | protected by your link |
+| mobile-first | built for phones |
+| 5-step | five steps |
+| pixel-perfect | precise |
+| one-time-use | unique |
+| real-time | live |
+
+**Exceptions:** Only when the hyphenated form is standard and clarity demands it (e.g., brand names like "DuitNow QR").
+
+### Tone Guidelines
+
+- **Contractions are required.** "You're", "it's", "don't" — never "you are", "it is", "do not".
+- **Short sentences.** If a sentence exceeds two lines, break it up.
+- **Read it aloud.** If it sounds like a brochure, rewrite. If it sounds like a friend texting, ship it.
+- **No jargon.** Clients don't know what "slot locking" means. Say "your date is held for 10 minutes".
+
+## 10. Mockup Authenticity
+
+Product mockups in marketing contexts (landing page hero sequence) must render the product UI faithfully using MUASuites design tokens. However, third-party brand colors are permitted **inside mockups only** for instant recognition.
+
+### Permitted Brand Colors (Inside Mockups Only)
+
+| Brand | Color | Usage |
+|-------|-------|-------|
+| WhatsApp | `#075e54` | Chat header background |
+| WhatsApp | `#dcf8c6` | Message bubble (incoming) |
+| WhatsApp | `#d9fdd3` | Message bubble (outgoing) |
+| Telegram | `#0088cc` | Chat header background |
+| Telegram | `#effdde` | Message bubble |
+| DuitNow | White/neutral | QR code container |
+
+### Rules
+
+- **Mockup borders/chrome:** Always MUASuites tokens (ring-foreground/10, bg-card)
+- **Mockup content:** Authentic brand colors for recognition
+- **Page chrome:** Never use third-party brand colors (no WhatsApp green nav, no Telegram blue buttons)
+- **Product UI inside mockups:** Must match actual product (same tokens, same shapes)

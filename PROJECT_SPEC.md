@@ -112,7 +112,7 @@ MUASuites is a SaaS booking management platform tailored for freelance **Makeup 
 
 | Route | File | Auth | Purpose |
 |-------|------|------|---------|
-| `/` | `+page.svelte` | None | Landing page (placeholder/home) |
+| `/` | `+page.svelte` + `$lib/components/landing/*` | None | **Marketing landing page** — hero with sequenced product mockups, problem/comparison, how-it-works, pricing (Free/Pro), FAQ with JSON-LD |
 | `/[mua_slug]` | `+page.server.ts` + `+page.svelte` | None | **MUA Public Profile**: calendar availability checker, travel surcharge estimator (Mapbox), Leaflet map, service packages listing, WhatsApp inquiry button |
 | `/[mua_slug]/[token]` | `+page.server.ts` + `+page.svelte` | None | **Invite Booking Funnel**: 5-step guided checkout with gating (expired/used/capacity-paused/active), slot locking, receipt upload |
 | `/login` | `+page.svelte` | None | Magic link login for MUAs |
