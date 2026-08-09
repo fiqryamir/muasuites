@@ -1,8 +1,22 @@
 import { createServerClient } from '@supabase/ssr';
 import { PUBLIC_SUPABASE_URL, PUBLIC_SUPABASE_ANON_KEY } from '$env/static/public';
+import { isRudeScraper, isScannerPath } from '$lib/bot-triage.server';
 import type { Handle } from '@sveltejs/kit';
 
 export const handle: Handle = async ({ event, resolve }) => {
+	// ---- Bot / scanner triage ----
+	// Short-circuit BEFORE Supabase init and page rendering: rude scrapers get a
+	// minimal response, scanner junk paths get an instant 404, with no app work.
+	const userAgent = event.request.headers.get('user-agent') ?? '';
+	if (isRudeScraper(userAgent)) {
+		return new Response('Forbidden', { status: 403 });
+	}
+
+	const pathname = new URL(event.request.url).pathname;
+	if (isScannerPath(pathname)) {
+		return new Response(null, { status: 404 });
+	}
+
 	// Initialize a request-scoped Supabase client
 	event.locals.supabase = createServerClient(PUBLIC_SUPABASE_URL, PUBLIC_SUPABASE_ANON_KEY, {
 		cookies: {
@@ -42,8 +56,6 @@ export const handle: Handle = async ({ event, resolve }) => {
 	// because Cloudflare free tier cannot purge CDN cache programmatically.
 	// Without s-maxage, every request hits the Worker which reads from KV (fast, ~14ms).
 	// KV-based invalidation (via DELETE) works instantly this way.
-	const url = new URL(event.request.url);
-	const pathname = url.pathname;
 
 	// Static assets (fingerprinted by Vite — safe to cache forever)
 	if (pathname.startsWith('/_app/')) {
