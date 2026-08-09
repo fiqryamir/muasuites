@@ -1,62 +1,71 @@
-# Handoff — MUAsuites landing page build
+# Handoff — MUAsuites free-tier infra effort (`free-tier-infra`)
 
 ## Next session focus
 
-Continue building the MUAsuites marketing landing page: finish Phase 2 verification, then Phase 3 (mockups/hero/video) and Phase 4 (polish/SEO/docs).
+Work the **free-tier-infra** build. The wayfinder map is charted, the spec is written, and the single open decision is resolved — the way to the destination is clear. Pick the first **frontier** ticket and build it.
+
+Recommended order: **01 — Move auth gating server-side** (the prefactor, no blockers) → **02 — Prerender the landing page** (blocked by 01) → 03 / 04 (both unblocked; 04 is a human-checklist ticket) → **05 — Verify with numbers** (blocked by 01–04).
 
 ## Project & repo
 
 - Repo: root of this project (SvelteKit 5 runes + Tailwind v4 + shadcn-svelte/bits-ui + Supabase + Cloudflare adapter, TypeScript strict, npm)
 - Product: "invisible" booking micro-SaaS for Malaysian makeup artists — WhatsApp-first, DuitNow QR deposits, Telegram notifications, .ics calendar, magic-link auth at `/login`
-- Key docs (read these first, do not duplicate):
-  - `DESIGN.md` — design system, strict rules (Inter only, sentence case, no eyebrows/gradient text/glassmorphism, rose ≤10%, flat cards with ring)
-  - `PRODUCT.md` — brand personality (invisible, warm, hasslefree), anti-references
-  - `PROJECT_SPEC.md` — routes, schema, booking flow
-  - `LANDING_COPY.md` — **Phase 1 output: full approved landing copy for all 11 sections** (source of truth for wording)
+- Deploys to a Cloudflare Worker + assets (`wrangler.jsonc`), KV namespace `MUA_CACHE`, SvelteKit adapter: `@sveltejs/adapter-cloudflare`
+- The single biggest burn risk (per `INFRASTRUCTURE_CAPACITY_REPORT.md` in the Downloads folder): Worker CPU time (10ms) + request quota (100K/day), and the root layout runs an auth session check on **every** page including the static landing page and all public routes.
+
+## Where the work lives (local-markdown tracker — see `docs/agents/issue-tracker.md`)
+
+- Map: `.scratch/free-tier-infra/map.md` — Destination / Notes / Decisions-so-far / Fog / Out of scope
+- Spec: `.scratch/free-tier-infra/spec.md` — problem, solution, user stories, implementation + testing decisions
+- Decisions: `.scratch/free-tier-infra/decisions/` — 01–04 resolved; **05 resolved** (Pin the bot-protection defaults)
+- Build tickets: `.scratch/free-tier-infra/issues/` — 01, 02, 03, 04, 05 (blocking wired in each file)
+- No `gh`/`glab` CLI on this machine → issues are markdown files, not GitHub issues. **Frontier** = open, unblocked, unclaimed tickets (currently 01, 03, 04).
 
 ## Locked decisions (user-confirmed)
 
-1. Language: clean premium English, sentence case (SG/ID-expandable)
-2. Free tier copy = **5 active bookings** (DB RPC `secure_checkout_slot` still enforces 2 — user will update separately; do NOT change in this work)
-3. Sell Telegram **inline approve/decline** (ships at launch) and **.ics auto-dispatch** (live at launch)
-4. Demo CTA → seeded demo studio on real `/[mua_slug]` route; assumed slug `/aina-beauty` (unconfirmed)
-5. Design direction: "calm editorial" — DESIGN.md tokens + a marketing expression layer (Zen Browser-inspired: soft warm washes, ambient motion); product mockups stay DESIGN.md-accurate; add a "Marketing surfaces" addendum to DESIGN.md in Phase 4
-6. Hero media: coded mockup sequence baseline + Zen-style muted device-framed demo video loop (≤2.5MB, poster fallback, lazy-loaded) in Phase 3
+1. **Landing page leaves the Worker**: prerender `/` to a static edge asset (zero Worker invocations/CPU) — only after auth is out of the public layout.
+2. **Auth hardens server-side**: session resolution + server-side redirect move into an authenticated subtree (`(auth)` group); `/login` stays outside it but redirects already-authed MUAs to the dashboard; public routes stop running auth entirely.
+3. **Bot posture — moderate**: keep Google/Bing, **keep ALL AI crawlers** (AI-suggestion visibility; cheap on static/KV-cached pages), keep Instagram in-app WebView working; no blanket blocking, no Under-Attack.
+4. **Bot defaults (decision 05)**: robots.txt blocks **only Google-Extended**; code UA-triage = rude/non-compliant scrapers only; core scanner path 404s (`.php/.asp/.aspx/.env/.git`, `/wp-*`, `/xmlrpc.php`, `/config.*`); dashboard = BIC on (default), Bot Fight Mode on with Instagram-WebView verification, and the single free rate-limit rule = `/login` >20 req/60s → Managed Challenge.
+5. **Mechanism**: code in repo + human toggles the Cloudflare dashboard switches (ticket 04).
 
-## Current state — Phases 1, 2, 3, 4 complete
+## Current state
 
-Landing page fully built and verified:
-
-- `src/routes/+page.svelte` — assembly, SEO/OG meta, JSON-LD (SoftwareApplication + FAQPage from `faq-data.ts`)
-- `src/lib/components/landing/` — AnnouncementBar, Nav, Hero, HeroSequence (auto-cycling 4-frame phone sequence, captions, reduced-motion aware), mockups/ (Chat, Checkout, Telegram, Calendar), ProblemSection, ComparisonSection, HowItWorks, ClientExperience, FeaturesSection, ControlSection, PricingSection, FaqSection, FinalCta, Footer, StickyMobileCta, faq-data.ts
-- `static/og.svg` — OG image placeholder (replace with PNG render before launch; some platforms ignore SVG OG images)
-- `src/app.css` — `.landing-wash` utility
-- Docs updated: DESIGN.md §7 "Marketing Surfaces", PROJECT_SPEC.md route map for `/`
-
-Verification done: prettier/ESLint clean, svelte-check clean for landing files, dev smoke test 200 OK with all sections + JSON-LD present. ESLint notes: `svelte/no-navigation-without-resolve` requires literal fragment hrefs or direct `resolve()` calls (no dynamic `link.href`); JSON-LD in svelte:head needs the closing tag split (`</` + 'script>') to avoid the parse error.
+- Wayfinder map charted; spec published; build tickets 01–05 published with blocking edges.
+- Decision 05 resolved and recorded; tickets 03/04 unblocked; fog trimmed on the map.
+- **No build work started yet** — codebase untouched by this effort. Current auth architecture (the thing 01 refactors):
+  - `src/hooks.server.ts` — request-scoped Supabase client + route-based Cache-Control (`/` currently gets no cache header)
+  - `src/routes/+layout.server.ts` — runs `safeGetSession()` for every page (including landing + all public routes)
+  - `src/routes/+layout.ts` + `+layout.svelte` — universal client + auth-state subscription
+  - `(dashboard)/+layout.svelte` — auth gating is **client-side only** today (`goto('/login')` after render)
+  - `(dashboard)/bookings/all/+page.server.ts` — reads `parent()` session, returns empty data if none
+- Landing page (`src/routes/+page.svelte`) is fully static (no `+page.server.ts`) — a clean prerender target.
 
 ## Remaining work
 
-1. **Demo video** (Phase 3b) — demo studio is seeded and live at `/aina-beauty` (seed saved to `supabase/seed.sql`, re-runnable). Next: record real app flows at ~390px viewport + the coded Telegram/.ics mockups, export WebM+MP4 ≤2.5MB with poster, embed muted/loop/playsinline lazy-loaded in hero
-2. **OG PNG** — render og.svg to 1200×630 PNG before launch
-3. **KNOWN PRE-EXISTING ISSUE:** `npm run build` fails — `MAPBOX_ACCESS_TOKEN` missing from `.env` (imported via `$env/static/private` in `src/routes/api/*/+server.ts`). Predates landing work; blocks deployment until user adds the key. svelte-check also reports 13 pre-existing warnings in `[mua_slug]/[token]` and `(dashboard)/bookings/all`.
+1. **Build tickets** (`.scratch/free-tier-infra/issues/`): 01 → 02 → 03 → 04 (human) → 05 (verify). Each has acceptance criteria; claim by setting `Status: claimed`, resolve by appending `## Answer` + `Status: resolved`, and append a Decisions-so-far pointer to the map for any new decision tickets you open.
+2. **Landing-page leftovers from the previous effort** (carried forward): demo video for the hero (Phase 3b), OG PNG render of `static/og.svg`, and the deploy-blocker below.
+
+## Known BLOCKER (pre-existing)
+
+- `npm run build` **fails**: `MAPBOX_ACCESS_TOKEN` missing from `.env` (imported via `$env/static/private` in `src/routes/api/*/+server.ts`). This predates this effort and blocks any deploy until the key is added. Dev (`npm run dev`) and `svelte-check` work. Do not burn time fixing unrelated API files.
 
 ## Conventions observed in repo
 
-- Tabs, single quotes, prettier + eslint (run `npm run lint` before done)
-- UI imports: `import * as Card from '$lib/components/ui/card'`, `import { Button } from '$lib/components/ui/button'`
-- Icons: `@lucide/svelte`
-- Sections: container `mx-auto w-full max-w-6xl px-5 sm:px-8`, padding `py-20 sm:py-28`, titles `text-3xl font-semibold tracking-tight sm:text-4xl`, alternating `bg-muted/40` bands
+- Tabs, single quotes, prettier + eslint — run `npm run check` (svelte-check) and `npm run lint` before finishing a ticket
+- UI imports: `import * as Card from '$lib/components/ui/card'`, `import { Button } from '$lib/components/ui/button'`; icons via `@lucide/svelte`
+- Deploy path: `npx wrangler deploy` (only once the build passes / key exists)
 
 ## User's own parallel todos (not ours)
 
-Raise FREE capacity 2→5 in `secure_checkout_slot` RPC · ship Telegram inline buttons · wire .ics auto-dispatch · seed demo studio row · confirm demo slug, footer contact channel, Pro "priority support" promise
+Add `MAPBOX_ACCESS_TOKEN` to `.env` (unblocks deploys) · Cloudflare dashboard toggles per ticket 04 · later: free-capacity 2→5 in `secure_checkout_slot` RPC, Telegram inline buttons, .ics auto-dispatch, demo slug confirmation.
 
 ## Suggested skills
 
-- No environment skills are required for this work (`customize-opencode` and `find-skills` are irrelevant here — this is application code, not opencode config)
-- Work directly from `DESIGN.md` / `PRODUCT.md` / `LANDING_COPY.md`; follow the todo list phases
+- `/wayfinder` to work the map (load `map.md`, pick/claim the frontier ticket, record resolutions)
+- `/implement` or `/tdd` for build work; `/grilling` + `/domain-modeling` for any HITL decision that surfaces; `/code-review` to review finished slices
+- `customize-opencode` and `find-skills` are irrelevant here — this is application code
 
 ## Sensitive info
 
-- `.env` exists in repo root; was never read. No secrets in this handoff.
+- `.env` exists in repo root; was never read. No secrets in this handoff. Never read or commit `.env`.
