@@ -4,7 +4,7 @@
 
 **Blocked by:** 01 — Move auth gating server-side; 02 — Prerender the landing page; 03 — Bot & scanner triage in the request hook; 04 — Cloudflare dashboard protection checklist.
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 Related: report re-verification (`INFRASTRUCTURE_CAPACITY_REPORT.md` §10–12), [Measurement](../map.md).
 

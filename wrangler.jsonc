@@ -8,7 +8,7 @@
 		"directory": ".svelte-kit/cloudflare"
 	},
   "observability": {
-    "enabled": false
+    "enabled": true
   },
 	"compatibility_flags": [
 		"nodejs_compat"

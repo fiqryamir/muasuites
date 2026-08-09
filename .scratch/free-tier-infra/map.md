@@ -23,7 +23,7 @@ The public + auth surface of MUASuites stays inside Cloudflare Workers and Supab
 - [Bot protection posture](decisions/02-bot-protection-posture.md) — moderate: keep SEO + Instagram in-app browser working; no Under-Attack, no blanket block.
 - [Auth hardening boundary](decisions/03-auth-hardening-boundary.md) — session resolution + server-side redirect move into the authenticated subtree; login stays ungated but redirects already-authed MUAs.
 - [Mechanism split](decisions/04-mechanism-split.md) — code (prerender, cache headers, UA/scanner triage, robots.txt) in repo; human toggles Browser Integrity Check, Bot Fight Mode, one rate-limit rule.
-- [Pin the bot-protection defaults](decisions/05-pin-the-bot-protection-defaults.md) — keep all AI crawlers (visibility for pennies; landing static, profiles KV-cached), robots.txt blocks only Google-Extended; code triage = rude scrapers only; core scanner filter; one free rate-limit rule on `/login` (20 req/60s → Managed Challenge); BIC on, Bot Fight Mode on with IG-WebView verification.
+- [Pin the bot-protection defaults](decisions/05-pin-the-bot-protection-defaults.md) — keep all AI crawlers (visibility for pennies; landing static, profiles KV-cached), robots.txt blocks only Google-Extended; code triage = rude scrapers only; core scanner filter; one free rate-limit rule on `/login` (built as >10 req/10s → Block 10s after the free-tier UI forced 10s period / Block action / 10s duration — see the decision-05 addendum); BIC on, Bot Fight Mode on with IG-WebView verification.
 
 ## Not yet specified
 
