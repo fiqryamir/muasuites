@@ -7,6 +7,7 @@
 	import { Input } from '$lib/components/ui/input';
 	import { Field, FieldLabel } from '$lib/components/ui/field';
 	import { DatePicker } from '$lib/components/ui/date-picker';
+	import { dateKey, countActiveBookingsOn, addBlackoutDate, removeBlackoutDate, invalidatePublicProfile } from '$lib/blackouts';
 
 	type BlackoutDate = {
 		id: number;
@@ -29,12 +30,6 @@
 
 	let selectedDate = $state<Date | undefined>();
 	let reason = $state('');
-
-	function dateKey(d: Date) {
-		return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(
-			d.getDate()
-		).padStart(2, '0')}`;
-	}
 
 	const todayKey = dateKey(new Date());
 
@@ -76,12 +71,7 @@
 	}
 
 	async function invalidatePublicCache() {
-		if (!muaSlug) return;
-		fetch('/api/cache/invalidate', {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ slugs: [muaSlug] })
-		}).catch(() => {});
+		invalidatePublicProfile(muaSlug);
 	}
 
 	async function handleAdd(e: Event) {
@@ -94,22 +84,9 @@
 		const key = dateKey(selectedDate);
 		adding = true;
 
-		const tenMinAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+		const count = await countActiveBookingsOn(supabase, userId, key);
 
-		const { count } = await supabase
-			.from('bookings')
-			.select('id', { count: 'exact', head: true })
-			.eq('mua_id', userId)
-			.eq('event_date', key)
-			.or(
-				`status.in.(CONFIRMED,FULLY_PAID,PENDING_APPROVAL),and(status.eq.CHECKING_OUT,locked_at.gt.${tenMinAgo})`
-			);
-
-		const { error } = await supabase.from('blackout_dates').insert({
-			mua_id: userId,
-			blackout_date: key,
-			reason: reason.trim() || null
-		});
+		const { error } = await addBlackoutDate(supabase, userId, key, reason);
 
 		adding = false;
 
@@ -139,7 +116,7 @@
 	async function handleDelete(id: number) {
 		deletingId = id;
 
-		const { error } = await supabase.from('blackout_dates').delete().eq('id', id);
+		const { error } = await removeBlackoutDate(supabase, id);
 
 		deletingId = null;
 

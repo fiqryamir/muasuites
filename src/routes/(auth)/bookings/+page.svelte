@@ -20,6 +20,7 @@
 	import ReceiptButtons from '$lib/components/ui/receipt-buttons.svelte';
 	import WhatsAppRemind from '$lib/components/ui/whatsapp-remind.svelte';
 	import { fmtDate, fmtDateShort, fmtTime, fmtTimeRange, fmtCurrency, getInitials, relativeTime, statusLabel, statusColor } from '$lib/bookings-ui';
+	import AvailabilityCalendar from '$lib/components/ui/availability-calendar.svelte';
 
 	let supabase = $derived(page.data.supabase);
 	let session = $derived(page.data.session);
@@ -32,6 +33,7 @@
 	let studioName = $state('');
 
 	let bookings = $state<any[]>([]);
+	let blackoutDates = $state<{ id: number; blackout_date: string; reason: string | null }[]>([]);
 
 	// Detail dialog state
 	let showDetailsDialog = $state(false);
@@ -154,6 +156,7 @@
 		}
 
 		await loadBookings();
+		await loadBlackoutsData();
 	});
 
 	async function loadBookings() {
@@ -166,6 +169,17 @@
 
 		bookings = data || [];
 		loading = false;
+	}
+
+	async function loadBlackoutsData() {
+		const { data } = await supabase
+			.from('blackout_dates')
+			.select('id, blackout_date, reason')
+			.eq('mua_id', userId)
+			.gte('blackout_date', todayStr)
+			.order('blackout_date', { ascending: true });
+
+		blackoutDates = data || [];
 	}
 
 	async function handleGenerateLink(e: Event) {
@@ -409,6 +423,27 @@
 				<p class="mt-0.5 text-xs text-muted-foreground">Revenue this month</p>
 			</div>
 		</div>
+
+		<!-- Availability Calendar -->
+		<Card.Root class="animate-in-up">
+			<Card.Header>
+				<Card.Title>Availability</Card.Title>
+				<Card.Description>
+					Your booked days and off days at a glance. Click a day for details.
+				</Card.Description>
+			</Card.Header>
+			<Card.Content>
+				<AvailabilityCalendar
+					{supabase}
+					userId={userId}
+					slug={muaSlug}
+					{bookings}
+					{blackoutDates}
+					onBookingClick={openDetails}
+					onBlackoutChange={loadBlackoutsData}
+				/>
+			</Card.Content>
+		</Card.Root>
 
 		{#if atCapacity}
 			<!-- Capacity limit reached: warm upgrade nudge -->
