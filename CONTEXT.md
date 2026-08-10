@@ -38,6 +38,16 @@ _Avoid_: Down payment, advance, prepayment
 Remaining amount due after the deposit. Typically paid on the event day.
 _Avoid_: Due amount, remaining, remainder
 
+## Onboarding
+
+**Onboarding**:
+The guided setup flow every new MUA must complete before their first use of the dashboard. Progress is tracked per step and the dashboard stays gated until the flow is finished.
+_Avoid_: Setup wizard, signup flow, getting started
+
+**Onboarding Step**:
+One stage of the onboarding flow: identity, payment, packages, optional extras, then the link reveal. Each step is complete once its fields are saved and validated — the optional step can be skipped, which counts as complete.
+_Avoid_: Wizard page, stage, tab
+
 ## Booking Lifecycle
 
 **Checking Out**:

@@ -64,7 +64,12 @@ export const handle: Handle = async ({ event, resolve }) => {
 	}
 
 	// Dashboard routes (authenticated — never cache)
-	if (pathname.startsWith('/bookings') || pathname.startsWith('/settings') || pathname === '/login') {
+	if (
+		pathname.startsWith('/bookings') ||
+		pathname.startsWith('/settings') ||
+		pathname.startsWith('/onboarding') ||
+		pathname === '/login'
+	) {
 		response.headers.set('Cache-Control', 'private, no-cache');
 		return response;
 	}

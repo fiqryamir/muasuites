@@ -24,3 +24,34 @@ export const inviteGeneratorSchema = z.object({
 	depositValueOverride: z.coerce.number().positive('Must be greater than 0.').nullable().optional(),
 	bufferMinutesOverride: z.coerce.number().int().min(0, 'Buffer must be 0 or more.').max(120, 'Buffer cannot exceed 120 minutes.').nullable().optional()
 });
+
+/** Schema for validating the settings / onboarding profile form fields */
+export const configSchema = z.object({
+	slug: z
+		.string()
+		.min(3, 'Handle must be at least 3 characters.')
+		.max(20, 'Handle must be 20 characters or less.')
+		.regex(/^[a-z0-9_]+$/, 'Only lowercase letters, numbers, and underscores.'),
+	studioName: z.string().min(2, 'Studio name must be at least 2 characters.'),
+	whatsappNumber: z
+		.string()
+		.regex(/^(601)[0-9]{8,10}$/, 'Valid Malaysian format required (e.g. 60123456789).'),
+	depositValue: z.number().nonnegative('Deposit cannot be negative.'),
+	telegramChatId: z.string().optional()
+});
+
+/** Schema for validating the package add form fields */
+export const packageSchema = z.object({
+	pkgEmoji: z.string().emoji('Enter a single emoji.'),
+	pkgName: z.string().min(3, 'Name must be at least 3 characters.'),
+	pkgPrice: z.number().positive('Price must be greater than RM 0.')
+});
+
+/** Shape of a package row as rendered by the shared package form */
+export interface PackageRow {
+	id: number;
+	name: string;
+	price: number | string;
+	emoji: string;
+	duration_hours?: number | string;
+}
