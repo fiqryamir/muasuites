@@ -297,6 +297,7 @@ const secretValues = [
 	env.SUPABASE_ACCESS_TOKEN,
 	env.SUPABASE_ANON_KEY,
 	env.TELEGRAM_BOT_TOKEN,
+	env.TELEGRAM_WEBHOOK_SECRET,
 	env.MAPBOX_ACCESS_TOKEN
 ].filter(Boolean);
 for (const s of secretValues) {

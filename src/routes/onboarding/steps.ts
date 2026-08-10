@@ -119,7 +119,7 @@ export const steps: Step[] = [
 				id: 'telegram',
 				label: 'Telegram alerts',
 				type: 'telegram',
-				why: 'Get an instant message whenever a client books or pays, so nothing slips through. To find your Chat ID, message @userinfobot on Telegram.'
+				why: 'Get an instant message on your phone whenever a client books or pays — so nothing slips through. One tap to connect, no codes to copy.'
 			},
 			{
 				id: 'travel',

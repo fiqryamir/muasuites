@@ -37,3 +37,5 @@ Sketch the full wizard as a cheap, rough artifact to react to: step-by-step fiel
 **Validation model (fog item graduated):** real-time — Continue stays disabled until the step's required fields are valid (no on-submit error wall).
 
 **Build note:** the real wizard will be re-implemented from this content (prototype code is throwaway, no persistence, no auth). At build handoff, capture the prototype set to a throwaway branch and remove the `/prototype/onboarding` route from main.
+
+**Amended (ticket 07 — one-tap Telegram connect):** the step-4 Telegram field no longer asks MUAs to message @userinfobot and copy a Chat ID. The app's own bot (already used for alerts) powers a deep-link connect: "Connect Telegram" → `t.me/<bot>?start=<one-time-token>` → webhook writes `telegram_chat_id` (SECURITY DEFINER RPC). Manual Chat-ID entry stays as an advanced option for group chats. The locked `why` copy for the telegram field was updated to the one-tap wording ("no codes to copy").
