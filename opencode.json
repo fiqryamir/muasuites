@@ -1,15 +1,16 @@
 {
-  "$schema": "https://opencode.ai/config.json",
-  "model": "opencode-go/deepseek-v4-flash",
-  "skills": {
-    "paths": [".agents/skills"]
-  },
-  "agent": {
-    "plan": {
-      "model": "opencode-go/deepseek-v4-flash"
-    },
-    "build": {
-      "model": "opencode-go/deepseek-v4-flash"
-    }
-  }
+	"$schema": "https://opencode.ai/config.json",
+	"model": "opencode-go/deepseek-v4-flash",
+	"skills": {
+		"paths": [".agents/skills"]
+	},
+	"instructions": ["docs/agents/supabase-state.md"],
+	"agent": {
+		"plan": {
+			"model": "opencode-go/deepseek-v4-flash"
+		},
+		"build": {
+			"model": "opencode-go/deepseek-v4-flash"
+		}
+	}
 }
