@@ -231,7 +231,7 @@
 				{/each}
 			</div>
 			<div class="grid grid-cols-7">
-				{#each calendarDays as day (day)}
+				{#each calendarDays as day, i (day === null ? 'pad-' + i : day)}
 					{#if day === null}
 						<div class="h-9"></div>
 					{:else}

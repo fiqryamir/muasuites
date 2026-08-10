@@ -139,20 +139,15 @@
 			muaPlan = mua.subscription_plan;
 		}
 
-		// Fetch studio name and config defaults for greeting
+		// Fetch studio name for greeting
 		const { data: config } = await supabase
 			.from('mua_configs')
-			.select('studio_name, default_transport_fee')
+			.select('studio_name')
 			.eq('mua_id', userId)
 			.single();
 
 		if (config?.studio_name) {
 			studioName = config.studio_name;
-		}
-
-		// Pre-fill transport fee from config if set
-		if (config?.default_transport_fee) {
-			transportOverride = config.default_transport_fee;
 		}
 
 		await loadBookings();
