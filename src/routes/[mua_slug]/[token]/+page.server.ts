@@ -195,6 +195,7 @@ export const actions: Actions = {
 				'TIME_SLOT_CONFLICT': 'This time slot overlaps with an existing booking. Please choose a different time.',
 				'BEFORE_WORKING_HOURS': rpcResult.message || 'The selected time is before the MUA\'s working hours.',
 				'AFTER_WORKING_HOURS': rpcResult.message || 'The booking would extend past the MUA\'s working hours.',
+				'DATE_BLACKOUT': 'The MUA is off on this date. Please pick another day.',
 				'PACKAGE_NOT_FOUND': 'The selected package could not be found.'
 			};
 			return fail(400, { error: errorMapping[rpcResult?.error] || 'This slot is unavailable.' });

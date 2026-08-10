@@ -33,6 +33,7 @@
 	const navLinks = [
 		{ href: resolve('/bookings'), label: 'Dashboard', mobileLabel: 'Dashboard' },
 		{ href: resolve('/bookings/all'), label: 'All bookings', mobileLabel: 'All' },
+		{ href: resolve('/blackouts'), label: 'Off days', mobileLabel: 'Off days' },
 		{ href: resolve('/settings'), label: 'Settings', mobileLabel: 'Settings' }
 	];
 </script>

@@ -9,12 +9,14 @@
 		value = $bindable<Date | undefined>(),
 		placeholder = $bindable('Pick a date'),
 		class: className,
-		disabled = false
+		disabled = false,
+		disabledDates = () => false
 	}: {
 		value?: Date | undefined;
 		placeholder?: string;
 		class?: string;
 		disabled?: boolean;
+		disabledDates?: (date: Date) => boolean;
 	} = $props();
 
 	let open = $state(false);
@@ -59,6 +61,11 @@
 		</Button>
 	</Popover.Trigger>
 	<Popover.Content class="w-auto p-0 rounded-xl" side="bottom" align="start">
-		<Calendar type="single" bind:value={calendarValue} locale="en-MY" />
+		<Calendar
+			type="single"
+			bind:value={calendarValue}
+			locale="en-MY"
+			isDateDisabled={(d) => disabledDates(new Date(d.year, d.month - 1, d.day))}
+		/>
 	</Popover.Content>
 </Popover.Root>
