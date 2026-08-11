@@ -1,0 +1,23 @@
+name: Cron
+
+on:
+  schedule:
+    # Hourly, offset to avoid the top of the hour
+    - cron: '17 * * * *'
+  workflow_dispatch: {}
+
+jobs:
+  cron:
+    runs-on: ubuntu-latest
+    env:
+      CRON_API_KEY: ${{ secrets.CRON_API_KEY }}
+    steps:
+      - name: Guard — CRON_API_KEY secret must exist
+        if: env.CRON_API_KEY == ''
+        run: echo "::warning::CRON_API_KEY repo secret not set — add it under Settings → Secrets and variables → Actions"; exit 1
+      - name: Auth-bomb detector (hourly)
+        if: env.CRON_API_KEY != ''
+        run: curl -fsS "https://muasuite.com/api/cron/auth-bomb-detector?key=${{ secrets.CRON_API_KEY }}"
+      - name: Overdue balance reminders (hourly, self-dedupes to once/day per booking)
+        if: env.CRON_API_KEY != ''
+        run: curl -fsS "https://muasuite.com/api/cron/overdue-reminders?key=${{ secrets.CRON_API_KEY }}"
