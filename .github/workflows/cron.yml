@@ -17,7 +17,8 @@ jobs:
         run: echo "::warning::CRON_API_KEY repo secret not set — add it under Settings → Secrets and variables → Actions"; exit 1
       - name: Auth-bomb detector (hourly)
         if: env.CRON_API_KEY != ''
-        run: curl -fsS "https://muasuite.com/api/cron/auth-bomb-detector?key=${{ secrets.CRON_API_KEY }}"
+        # workers.dev hostname: bypasses zone Bot Fight Mode/BIC, which block datacenter runner IPs
+        run: curl -fsS "https://muasuites.mfiqry9907.workers.dev/api/cron/auth-bomb-detector?key=${{ secrets.CRON_API_KEY }}"
       - name: Overdue balance reminders (hourly, self-dedupes to once/day per booking)
         if: env.CRON_API_KEY != ''
-        run: curl -fsS "https://muasuite.com/api/cron/overdue-reminders?key=${{ secrets.CRON_API_KEY }}"
+        run: curl -fsS "https://muasuites.mfiqry9907.workers.dev/api/cron/overdue-reminders?key=${{ secrets.CRON_API_KEY }}"
