@@ -1,6 +1,6 @@
 # 01 — Auth-bomb detector cron (canary probe design)
 
-**Status:** open
+**Status:** resolved
 
 Build ticket from decision 06 "Detection and alerting during an active bombing" (wayfinder effort `email-bombing-protection`).
 
@@ -56,3 +56,14 @@ Interpretation:
 
 - Decision 06 (resolved) — design locked, canary pivot approved by the human.
 - Human: `AUTH_ALERT_TELEGRAM_CHAT_ID` value + Cloudflare Worker secret wiring + scheduler trigger + revoke the unused PAT.
+
+## Answer (resolved 2026-08-11)
+
+Deployed and verified end-to-end:
+
+- **GitHub Actions workflow** (`cron.yml`, hourly at :17) runs both cron endpoints via the workers.dev hostname (`muasuites.mfiqry9907.workers.dev`) — the custom domain's Bot Fight Mode 403s datacenter runner IPs (docs: BFM can't be skipped except via IP Access rules, which would also bypass the /login rate-limit rule — so workers.dev was the clean path).
+- **Detector confirmed live**: `GET /api/cron/auth-bomb-detector?key=<CRON_API_KEY>` → 200, canary `demo@muasuites.com` (note: intermittent 422 `otp_disabled` still observed — the known 2026-08-11 platform flakiness; no alert fires on 422 by design, only `429 over_email_send_rate_limit`).
+- **Overdue reminders**: previously unconfigured; required `SUPABASE_SERVICE_ROLE_KEY` on the Worker (missing since inception — 500 `Service role key not configured` until added). Now → 200 `{"notified":0}`.
+- **Keys**: `CRON_API_KEY` + `AUTH_ALERT_TELEGRAM_CHAT_ID` + `SUPABASE_SERVICE_ROLE_KEY` on the Worker; `CRON_API_KEY` in GitHub Actions secrets. `?test=1` hook available for alert-path smoke tests.
+
+Loose ends (parked with the human): revoke the unused `muasuites-auth-bomb-detector` PAT; production magic-link click-through test post-deploy; `site_url` still `localhost:5173` (future effort).
