@@ -20,4 +20,5 @@
 			"remote": false
 		}
 	]
+	// redeploy-trigger: no-op comment to force a Git-integration rebuild/deploy
 }
