@@ -48,6 +48,24 @@ _Avoid_: Setup wizard, signup flow, getting started
 One stage of the onboarding flow: identity, payment, packages, optional extras, then the link reveal. Each step is complete once its fields are saved and validated — the optional step can be skipped, which counts as complete.
 _Avoid_: Wizard page, stage, tab
 
+## Plans
+
+**Plan**:
+The tier an MUA holds — FREE, PRO, or FOUNDER — which sets their active booking capacity. FREE allows 2 active bookings; PRO and FOUNDER are unlimited.
+_Avoid_: Subscription, tier, package level
+
+**Plan Renewal**:
+A manual monthly (RM 29) or yearly (RM 290) payment by a PRO MUA via DuitNow QR with a receipt upload, verified by the founder. There is no auto-billing.
+_Avoid_: Subscription payment, auto-renewal, billing
+
+**Plan Expiry**:
+The end of a paid period. A 7-day grace period follows, during which the MUA is still treated as PRO; after grace, existing CONFIRMED bookings are honored but new checkouts fall to the FREE capacity.
+_Avoid_: Lapse, plan end, overdue plan
+
+**Founder Plan**:
+The FOUNDER tier: identical to PRO but free for life, manually granted to ~5–10 launch MUAs. Grants are revocable at the founder's discretion.
+_Avoid_: Lifetime deal, beta tier, pro bono
+
 ## Booking Lifecycle
 
 **Checking Out**:
@@ -86,4 +104,8 @@ _Avoid_: Gradient background, color wash, overlay
 
 **Product Mockup**:
 A faithful rendering of the actual product UI shown in marketing contexts. Uses the same design tokens, shapes, and colors as the real product.
-_Aavoid_: Demo, preview, screenshot, illustration
+_Avoid_: Demo, preview, screenshot, illustration
+
+**Auth Email Budget**:
+The instance-wide hourly cap on authentication emails (GoTrue `rate_limit_email_sent`, 30/hour on this instance). Exhaustion stops ALL auth email sends for the rest of the hour — a bombing attacker can burn the whole budget, so it is both a bomb limit and a denial vector.
+_Avoid_: Email quota, send limit, SMTP cap

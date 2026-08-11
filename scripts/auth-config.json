@@ -1,0 +1,6 @@
+{
+	"disable_signup": true,
+	"rate_limit_email_sent": 30,
+	"rate_limit_otp": 30,
+	"rate_limit_verify": 30
+}
