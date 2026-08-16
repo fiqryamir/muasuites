@@ -1,9 +1,9 @@
--- get_effective_plan — the single source of truth for a MUA's effective plan tier.
+-- get_effective_plan — the single source of truth for a MUA's effective plan.
 -- Rule: FOUNDER → unlimited; PRO with NULL expiry (lifetime grant) or expiry plus
 -- the 7-day grace in the future → unlimited; anything else (FREE, lapsed PRO) → FREE.
 -- The 7-day grace is derived here, never stored.
 -- SECURITY DEFINER: reads muas as the owner so anon callers never touch plan columns.
--- Returns ONLY the effective tier — expiry is never exposed.
+-- Returns ONLY the effective plan — expiry is never exposed.
 
 CREATE OR REPLACE FUNCTION public.get_effective_plan(p_mua_id uuid)
 RETURNS jsonb

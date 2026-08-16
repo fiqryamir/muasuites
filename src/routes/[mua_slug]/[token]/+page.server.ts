@@ -20,7 +20,7 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 	const muaId = invite.mua_id;
 
 	// 2. Fetch the MUA profile associated with the invite.
-	// Plan fields are deliberately excluded — anon can no longer read them;
+	// Plan fields are deliberately excluded — anon has no SELECT on them;
 	// the effective plan comes from the get_effective_plan RPC below.
 	const { data: mua, error: muaError } = await supabase
 		.from('muas')
@@ -121,11 +121,17 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 	// 7. Dynamic Effective-Plan Capacity Check
 	// The effective plan (FREE vs PRO/FOUNDER incl. grace) comes from the shared
 	// SECURITY DEFINER RPC — the same source secure_checkout_slot enforces.
-	const { data: effectivePlan } = await supabase.rpc('get_effective_plan', {
+	// Fail closed: an RPC error is treated as FREE so this advisory gate never
+	// disagrees with the enforcement point (which would reject mid-checkout).
+	const { data: effectivePlan, error: planError } = await supabase.rpc('get_effective_plan', {
 		p_mua_id: muaId
 	});
 
-	if (effectivePlan?.plan === 'FREE' && capacityBlockers.length >= 2) {
+	if (planError) {
+		console.error('get_effective_plan failed — treating MUA as FREE:', planError);
+	}
+
+	if ((effectivePlan?.plan === 'FREE' || planError) && capacityBlockers.length >= 2) {
 		return { gateState: 'CAPACITY_PAUSED' };
 	}
 
