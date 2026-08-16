@@ -21,3 +21,4 @@
 - pgTAP suite: `pgtap/` (fixtures + 3 test files + `run-tests.mjs`), 37 assertions, green on local Supabase. Note: fixtures avoid data-modifying CTEs — PG 17 does not execute unreferenced DML CTEs (production is PG 15).
 - Live verification: anon `SELECT id,slug` → 200; `SELECT subscription_plan`/`plan_expires_at` → 401 (42501); `rpc/get_effective_plan` → 200; studio page + booking-link 404s render; live effective plans match stored tiers (PRO w/ NULL expiry stays unlimited).
 - Manual smoke pending (no live booking links exist): generate a test booking link from the dashboard and walk a checkout end-to-end.
+- Code review (`/code-review`, 4e57b8a..HEAD): Spec axis clean (all 8 items, no creep); Standards flagged one introduced behavior bug — the route's advisory gate failed OPEN on RPC error — fixed (fail closed to FREE, commit `1ae725f`). Deferred per user: "Pro or Elite" dashboard copy at `bookings/+page.svelte:451` (ticket 02/04 surface).
