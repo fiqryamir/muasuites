@@ -28,7 +28,7 @@
 	let loading = $state(true);
 	let userId = $state('');
 	let muaSlug = $state('');
-	let muaPlan = $state<'FREE' | 'PRO' | 'ELITE'>('FREE');
+	let muaPlan = $state<'FREE' | 'PRO' | 'FOUNDER'>('FREE');
 	let accessToken = $state('');
 	let studioName = $state('');
 

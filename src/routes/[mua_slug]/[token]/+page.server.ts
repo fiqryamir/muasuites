@@ -19,10 +19,12 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 
 	const muaId = invite.mua_id;
 
-	// 2. Fetch the MUA profile associated with the invite
+	// 2. Fetch the MUA profile associated with the invite.
+	// Plan fields are deliberately excluded — anon can no longer read them;
+	// the effective plan comes from the get_effective_plan RPC below.
 	const { data: mua, error: muaError } = await supabase
 		.from('muas')
-		.select('id, slug, subscription_plan')
+		.select('id, slug')
 		.eq('id', muaId)
 		.single();
 
@@ -116,8 +118,14 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 
 	const blackoutDateSet = new Set(blackouts?.map((b: any) => b.blackout_date) || []);
 
-	// 7. Dynamic Free-Tier Capacity Check
-	if (mua.subscription_plan === 'FREE' && capacityBlockers.length >= 2) {
+	// 7. Dynamic Effective-Plan Capacity Check
+	// The effective plan (FREE vs PRO/FOUNDER incl. grace) comes from the shared
+	// SECURITY DEFINER RPC — the same source secure_checkout_slot enforces.
+	const { data: effectivePlan } = await supabase.rpc('get_effective_plan', {
+		p_mua_id: muaId
+	});
+
+	if (effectivePlan?.plan === 'FREE' && capacityBlockers.length >= 2) {
 		return { gateState: 'CAPACITY_PAUSED' };
 	}
 
