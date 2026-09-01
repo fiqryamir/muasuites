@@ -47,6 +47,8 @@
 	let venueSessionIdle: ReturnType<typeof setTimeout> | undefined;
 	const VENUE_DEBOUNCE_MS = 300;
 	const SESSION_IDLE_MS = 10 * 60 * 1000;
+	// Suggest cache: query+types+session_token scoped in-memory (cleared on rotate) — parity with public estimator
+	const venueSuggestCache = new Map<string, typeof venueSuggestions>();
 	let clientName = $state('');
 	let clientPhone = $state('');
 
@@ -360,6 +362,7 @@
 		} catch {
 			venueSessionToken = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 		}
+		venueSuggestCache.clear();
 		if (venueSessionIdle) clearTimeout(venueSessionIdle);
 		venueSessionIdle = setTimeout(() => rotateVenueSession(), SESSION_IDLE_MS);
 	}
@@ -389,6 +392,15 @@
 			venueNoResults = false;
 			return;
 		}
+
+		const suggestCacheKey = `${value.toLowerCase()}|venue|${venueSessionToken}`;
+		if (venueSuggestCache.has(suggestCacheKey)) {
+			venueSuggestions = venueSuggestCache.get(suggestCacheKey)!;
+			showVenueSuggestions = venueSuggestions.length > 0;
+			venueNoResults = venueSuggestions.length === 0;
+			return;
+		}
+
 		venueSearchTimeout = setTimeout(async () => {
 			try {
 				const res = await fetch(
@@ -397,6 +409,7 @@
 				const jsonData = await res.json();
 				if (jsonData.success) {
 					venueSuggestions = (jsonData.suggestions ?? []) as typeof venueSuggestions;
+					venueSuggestCache.set(suggestCacheKey, venueSuggestions);
 					showVenueSuggestions = venueSuggestions.length > 0;
 					venueNoResults = venueSuggestions.length === 0;
 				} else {
@@ -414,29 +427,22 @@
 		}, VENUE_DEBOUNCE_MS);
 	}
 
-	async function selectVenueSuggestion(sugg: (typeof venueSuggestions)[number]) {
+	function selectVenueSuggestion(sugg: (typeof venueSuggestions)[number]) {
 		venueAddress = sugg.full_address || sugg.place_formatted || sugg.name;
 		venueFullAddress = sugg.full_address || sugg.place_formatted || sugg.name;
 		venueMapboxId = sugg.mapbox_id;
-		// Retrieve coordinates now so booking persists precise location
-		try {
-			const res = await fetch(
-				`/api/retrieve-location?id=${encodeURIComponent(sugg.mapbox_id)}&session_token=${encodeURIComponent(venueSessionToken)}`
-			);
-			const j = await res.json();
-			if (j.success && j.lng != null && j.lat != null) {
-				venueLng = j.lng;
-				venueLat = j.lat;
-				venueFullAddress = j.full_address || venueFullAddress;
-				venueAddress = venueFullAddress;
-			}
-		} catch {
-			// keep without coords; server will fallback to string geocode
-		}
+		// Do not retrieve client-side — server will retrieve via same session_token at secureSlot
+		// so suggest→retrieve bills as one. Keep coordinates null; server will persist canonical
+		// full_address and venue_lat/lng from its retrieve.
+		venueLat = null;
+		venueLng = null;
 		showVenueSuggestions = false;
 		venueNoResults = false;
 		venueSuggestions = [];
-		rotateVenueSession();
+		if (venueSessionIdle) {
+			clearTimeout(venueSessionIdle);
+			venueSessionIdle = setTimeout(() => rotateVenueSession(), SESSION_IDLE_MS);
+		}
 	}
 
 	function closeVenueSuggestions() {
