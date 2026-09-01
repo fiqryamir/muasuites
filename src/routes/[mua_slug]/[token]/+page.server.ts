@@ -49,7 +49,9 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 	// 5. Fetch Studio config details (needed before daySlots for buffer)
 	const { data: config } = await supabase
 		.from('mua_configs')
-		.select('studio_name, deposit_mode, duitnow_qr_url, whatsapp_number, deposit_value, working_hours_start, working_hours_end, default_buffer_minutes')
+		.select(
+			'studio_name, deposit_mode, duitnow_qr_url, whatsapp_number, deposit_value, working_hours_start, working_hours_end, default_buffer_minutes'
+		)
 		.eq('mua_id', muaId)
 		.single();
 
@@ -82,10 +84,14 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 	// 7. Query active bookings grouped by date as daySlots (skip this invite's CHECKING_OUT)
 	const { data: bookings } = await supabase
 		.from('bookings')
-		.select('event_date, event_time, status, locked_at, invite_id, client_name, packages!inner(name, emoji, duration_hours), invites!inner(buffer_minutes_override)')
+		.select(
+			'event_date, event_time, status, locked_at, invite_id, client_name, packages!inner(name, emoji, duration_hours), invites!inner(buffer_minutes_override)'
+		)
 		.eq('mua_id', muaId)
 		.gte('event_date', new Date().toISOString().split('T')[0])
-		.or(`status.in.("CONFIRMED","FULLY_PAID","PENDING_APPROVAL"),and(status.eq.CHECKING_OUT,locked_at.gt.${tenMinutesAgo})`);
+		.or(
+			`status.in.("CONFIRMED","FULLY_PAID","PENDING_APPROVAL"),and(status.eq.CHECKING_OUT,locked_at.gt.${tenMinutesAgo})`
+		);
 
 	const defaultBuffer = config?.default_buffer_minutes ?? 0;
 
@@ -109,12 +115,13 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 	}
 
 	// Capacity blockers count (for free-tier check) — same self-exclusion
-	const capacityBlockers = bookings?.filter((b: any) => {
-		if (b.status === 'CHECKING_OUT' && b.invite_id === invite.id) {
-			return false;
-		}
-		return true;
-	}) || [];
+	const capacityBlockers =
+		bookings?.filter((b: any) => {
+			if (b.status === 'CHECKING_OUT' && b.invite_id === invite.id) {
+				return false;
+			}
+			return true;
+		}) || [];
 
 	const blackoutDateSet = new Set(blackouts?.map((b: any) => b.blackout_date) || []);
 
@@ -179,7 +186,45 @@ export const actions: Actions = {
 
 		const data = validation.data;
 
+		// Resolve canonical venue via Search Box retrieve when a suggestion was picked
+		let canonicalAddress: string | undefined;
+		let canonicalLat: number | null | undefined;
+		let canonicalLng: number | null | undefined;
+
+		if (data.mapbox_id && typeof data.mapbox_id === 'string' && data.mapbox_id.length > 0) {
+			try {
+				const { MAPBOX_ACCESS_TOKEN } = await import('$env/static/private');
+				const sid = (data.session_token as string | undefined) ?? '';
+				const paramsRetrieve = new URLSearchParams({ access_token: MAPBOX_ACCESS_TOKEN });
+				if (sid) paramsRetrieve.set('session_token', sid);
+				else paramsRetrieve.set('session_token', crypto.randomUUID());
+				const retrieveUrl = `https://api.mapbox.com/search/searchbox/v1/retrieve/${encodeURIComponent(data.mapbox_id)}?${paramsRetrieve.toString()}`;
+				const r = await fetch(retrieveUrl);
+				if (r.ok) {
+					const j = await r.json();
+					const feat = j.features?.[0];
+					if (feat?.geometry?.coordinates) {
+						canonicalLng = feat.geometry.coordinates[0];
+						canonicalLat = feat.geometry.coordinates[1];
+						const props = feat.properties ?? feat;
+						canonicalAddress =
+							props.full_address ?? props.address ?? data.venue_full_address ?? data.venue_address;
+					}
+				}
+			} catch (e) {
+				console.warn('retrieve for booking failed, falling back to supplied address', e);
+			}
+		} else if (data.venue_lat != null && data.venue_lng != null) {
+			canonicalLat = data.venue_lat as number;
+			canonicalLng = data.venue_lng as number;
+			canonicalAddress = (data.venue_full_address as string) || data.venue_address;
+		} else if (data.venue_full_address) {
+			canonicalAddress = data.venue_full_address as string;
+		}
+
 		// Run Database Transaction with safe, validated variables
+		// If we have a canonical address from retrieve, store that instead of the raw input
+		const venueToStore = canonicalAddress || data.venue_address;
 		const { data: rpcResult, error: rpcError } = await supabase.rpc('secure_checkout_slot', {
 			p_mua_id: data.mua_id,
 			p_invite_id: data.invite_id || null,
@@ -188,7 +233,7 @@ export const actions: Actions = {
 			p_event_time: data.event_time,
 			p_client_name: data.client_name,
 			p_client_phone: data.client_phone,
-			p_venue_address: data.venue_address,
+			p_venue_address: venueToStore,
 			p_total_amount: data.total_amount,
 			p_deposit_amount: data.deposit_amount,
 			p_balance_amount: data.balance_amount
@@ -201,18 +246,41 @@ export const actions: Actions = {
 
 		if (!rpcResult?.success) {
 			const errorMapping: Record<string, string> = {
-				'INVITE_NOT_FOUND': 'Your invitation details could not be found.',
-				'INVITE_ALREADY_USED': 'This invitation link has already been used.',
-				'INVITE_EXPIRED': 'This invitation link has expired.',
-				'MUA_CAPACITY_EXCEEDED': 'The MUA has temporarily reached their booking capacity limit.',
-				'DATE_ALREADY_TAKEN': 'This date has just been locked by another client.',
-				'TIME_SLOT_CONFLICT': 'This time slot overlaps with an existing booking. Please choose a different time.',
-				'BEFORE_WORKING_HOURS': rpcResult.message || 'The selected time is before the MUA\'s working hours.',
-				'AFTER_WORKING_HOURS': rpcResult.message || 'The booking would extend past the MUA\'s working hours.',
-				'DATE_BLACKOUT': 'The MUA is off on this date. Please pick another day.',
-				'PACKAGE_NOT_FOUND': 'The selected package could not be found.'
+				INVITE_NOT_FOUND: 'Your invitation details could not be found.',
+				INVITE_ALREADY_USED: 'This invitation link has already been used.',
+				INVITE_EXPIRED: 'This invitation link has expired.',
+				MUA_CAPACITY_EXCEEDED: 'The MUA has temporarily reached their booking capacity limit.',
+				DATE_ALREADY_TAKEN: 'This date has just been locked by another client.',
+				TIME_SLOT_CONFLICT:
+					'This time slot overlaps with an existing booking. Please choose a different time.',
+				BEFORE_WORKING_HOURS:
+					rpcResult.message || "The selected time is before the MUA's working hours.",
+				AFTER_WORKING_HOURS:
+					rpcResult.message || "The booking would extend past the MUA's working hours.",
+				DATE_BLACKOUT: 'The MUA is off on this date. Please pick another day.',
+				PACKAGE_NOT_FOUND: 'The selected package could not be found.'
 			};
 			return fail(400, { error: errorMapping[rpcResult?.error] || 'This slot is unavailable.' });
+		}
+
+		// Persist canonical venue coordinates when available (no schema migration; columns exist)
+		if (rpcResult.booking_id && canonicalLat != null && canonicalLng != null) {
+			const { error: updErr } = await supabase
+				.from('bookings')
+				.update({ venue_lat: canonicalLat, venue_lng: canonicalLng, venue_address: venueToStore })
+				.eq('id', rpcResult.booking_id);
+			if (updErr)
+				console.warn('Failed to persist venue_lat/lng for booking', rpcResult.booking_id, updErr);
+		} else if (
+			rpcResult.booking_id &&
+			canonicalAddress &&
+			canonicalAddress !== data.venue_address
+		) {
+			const { error: updErr } = await supabase
+				.from('bookings')
+				.update({ venue_address: venueToStore })
+				.eq('id', rpcResult.booking_id);
+			if (updErr) console.warn('Failed to persist canonical venue_address', updErr);
 		}
 
 		const { data: bankConfig } = await supabase
@@ -251,7 +319,9 @@ export const actions: Actions = {
 
 		const allowedMimeTypes = ['image/jpeg', 'image/png', 'image/webp'];
 		if (!allowedMimeTypes.includes(receiptFile.type)) {
-			return fail(400, { error: 'Invalid file type. Only JPEG, PNG, or WebP screenshots are allowed.' });
+			return fail(400, {
+				error: 'Invalid file type. Only JPEG, PNG, or WebP screenshots are allowed.'
+			});
 		}
 
 		// Extract safe file extension mapping
@@ -276,7 +346,9 @@ export const actions: Actions = {
 		}
 
 		// Retrieve URL
-		const { data: { publicUrl } } = supabase.storage.from('receipt-uploads').getPublicUrl(filePath);
+		const {
+			data: { publicUrl }
+		} = supabase.storage.from('receipt-uploads').getPublicUrl(filePath);
 
 		// 3. Call secure transition RPC to commit status changes
 		const { data: rpcResult, error: rpcError } = await supabase.rpc('finalize_receipt_submission', {

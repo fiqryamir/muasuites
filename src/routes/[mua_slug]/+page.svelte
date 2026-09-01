@@ -17,12 +17,15 @@
 	const COOLDOWN_MS = 3000;
 	const DEBOUNCE_MS = 300;
 	const BLUR_TIMEOUT_MS = 200;
+	const SESSION_IDLE_MS = 10 * 60 * 1000;
 
-	// Mapbox suggestion shape (abbreviated from the API response)
-	interface MapboxSuggestion {
-		place_name: string;
-		text: string;
-		center: [number, number];
+	// Search Box suggestion shape (new contract)
+	interface VenueSuggestion {
+		mapbox_id: string;
+		name: string;
+		full_address: string;
+		place_formatted: string;
+		feature_type: string;
 	}
 
 	// --- 1. Client-Side Travel Estimator State ---
@@ -33,16 +36,53 @@
 	let estimatedDistance = $state<number | null>(null);
 	let estimatedTravelFee = $state<number | null>(null);
 	let resolvedVenueName = $state('');
+	let selectedMapboxId = $state<string | null>(null);
+	let selectedVenueCoords = $state<{ lat: number; lng: number } | null>(null);
 
-	let suggestions = $state<MapboxSuggestion[]>([]);
+	let suggestions = $state<VenueSuggestion[]>([]);
 	let showSuggestions = $state(false);
+	let noResultsHint = $state(false);
 	let searchTimeout: ReturnType<typeof setTimeout>;
+	let sessionToken = $state('');
+	let sessionIdleTimer: ReturnType<typeof setTimeout> | undefined;
 
-	// Local session cache to save Mapbox API calls (zero-cost lookups)
-	const publicMapboxCache = new Map<string, { distanceKm: number | null; computedFee: number | null; venueName: string }>();
+	// Local cache for estimates (keyed by mapbox_id for picked places; fallback key for free-form)
+	const estimateCache = new Map<
+		string,
+		{
+			distanceKm: number | null;
+			computedFee: number | null;
+			venueName: string;
+			venueLat?: number;
+			venueLng?: number;
+		}
+	>();
+	// Suggest cache: query+types+session_token scoped in-memory (cleared on rotate)
+	const suggestCache = new Map<string, VenueSuggestion[]>();
 
-	// --- 2. Leaflet Map Initialization ---
+	function rotateSessionToken() {
+		try {
+			sessionToken = crypto.randomUUID();
+		} catch {
+			sessionToken = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+		}
+		suggestCache.clear();
+		resetIdleTimer();
+	}
+
+	function resetIdleTimer() {
+		if (sessionIdleTimer) clearTimeout(sessionIdleTimer);
+		sessionIdleTimer = setTimeout(() => {
+			rotateSessionToken();
+		}, SESSION_IDLE_MS);
+	}
+
+	// --- 2. Leaflet Map Initialization + session token ---
 	onMount(async () => {
+		// Generate per-page session token for Search Box billing (suggest→retrieve billed as one)
+		if (browser) {
+			rotateSessionToken();
+		}
 		if (browser && data.baseLat && data.baseLng) {
 			const L = await import('leaflet');
 
@@ -85,24 +125,29 @@
 		}
 	});
 
-	// Mapbox Public geocoding and routing estimator
+	// Travel estimator: uses mapboxId path when a suggestion was picked, otherwise geocode fallback
 	async function handleEstimateTravel() {
 		if (!data.baseLat || !data.baseLng) return;
-		
-		const queryClean = clientVenueQuery.trim().toLowerCase();
-		if (!queryClean) {
+
+		const queryTrimmed = clientVenueQuery.trim();
+		if (!queryTrimmed) {
 			toast.warning('Please enter your event address or hotel name.');
 			return;
 		}
 
 		if (cooldownActive) return;
 
-		// Local memory cache check
-		if (publicMapboxCache.has(queryClean)) {
-			const cached = publicMapboxCache.get(queryClean)!;
+		// Cache key: mapbox_id when picked, otherwise normalized query lower-case
+		const cacheKey = selectedMapboxId ? selectedMapboxId : queryTrimmed.toLowerCase();
+		if (estimateCache.has(cacheKey)) {
+			const cached = estimateCache.get(cacheKey)!;
 			estimatedDistance = cached.distanceKm;
 			estimatedTravelFee = cached.computedFee;
 			resolvedVenueName = cached.venueName;
+			selectedVenueCoords =
+				cached.venueLat != null && cached.venueLng != null
+					? { lat: cached.venueLat, lng: cached.venueLng }
+					: selectedVenueCoords;
 			toast.success('Travel estimate loaded.');
 			return;
 		}
@@ -116,16 +161,22 @@
 		}, COOLDOWN_MS);
 
 		try {
-			// Fetch our secure, server-side API proxy (no tokens visible in client networks!)
+			const payload: Record<string, any> = {
+				baseLat: data.baseLat,
+				baseLng: data.baseLng,
+				ratePerKm: data.ratePerKm
+			};
+			if (selectedMapboxId) {
+				payload.mapboxId = selectedMapboxId;
+				payload.session_token = sessionToken;
+			} else {
+				payload.venue = queryTrimmed;
+			}
+
 			const response = await fetch('/api/estimate-travel', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					venue: clientVenueQuery,
-					baseLat: data.baseLat,
-					baseLng: data.baseLng,
-					ratePerKm: data.ratePerKm
-				})
+				body: JSON.stringify(payload)
 			});
 
 			const result = await response.json();
@@ -140,13 +191,21 @@
 			estimatedDistance = result.distanceKm;
 			estimatedTravelFee = result.computedFee;
 			resolvedVenueName = result.venueName;
+			if (result.venueLat != null && result.venueLng != null) {
+				selectedVenueCoords = { lat: result.venueLat, lng: result.venueLng };
+			}
 
-			// Save to cache
-			publicMapboxCache.set(queryClean, {
+			// Save to cache keyed by mapbox_id when available
+			estimateCache.set(cacheKey, {
 				distanceKm: estimatedDistance,
 				computedFee: estimatedTravelFee,
-				venueName: resolvedVenueName
+				venueName: resolvedVenueName,
+				venueLat: result.venueLat,
+				venueLng: result.venueLng
 			});
+
+			// Rotate session after successful retrieve billing window
+			if (selectedMapboxId) rotateSessionToken();
 
 			toast.success('Travel estimate ready');
 		} catch (err: any) {
@@ -159,52 +218,92 @@
 	}
 
 	async function handleInput(e: Event) {
-        const value = (e.target as HTMLInputElement).value;
-        clientVenueQuery = value;
+		const value = (e.target as HTMLInputElement).value;
+		clientVenueQuery = value;
+		// Typing free-form without pick should clear selected mapbox_id so fallback path is used
+		if (selectedMapboxId) {
+			// Only clear if content diverges from selected full_address
+			// We keep it simple: any typing clears unless we just selected
+			selectedMapboxId = null;
+			selectedVenueCoords = null;
+		}
+		clearTimeout(searchTimeout);
+		resetIdleTimer();
+		if (value.length < 3) {
+			suggestions = [];
+			showSuggestions = false;
+			noResultsHint = false;
+			return;
+		}
 
-        clearTimeout(searchTimeout);
-        if (value.length < 3) {
-            suggestions = [];
-            showSuggestions = false;
-            return;
-        }
+		const cacheKey = `${value.toLowerCase()}|venue|${sessionToken}`;
+		if (suggestCache.has(cacheKey)) {
+			suggestions = suggestCache.get(cacheKey)!;
+			showSuggestions = suggestions.length > 0;
+			noResultsHint = suggestions.length === 0;
+			return;
+		}
 
-        searchTimeout = setTimeout(async () => {
-            try {
-                // Call YOUR internal API route
-                const res = await fetch(`/api/search-location?q=${encodeURIComponent(value)}`);
-                const data = await res.json();
-                
-                if (data.success) {
-                    suggestions = data.features;
-                    showSuggestions = suggestions.length > 0;
-                }
-            } catch (err) {
-                console.error('Autocomplete error:', err);
-                toast.error('Could not load location suggestions.');
-            }
-        }, DEBOUNCE_MS);
-    }
+		searchTimeout = setTimeout(async () => {
+			try {
+				const res = await fetch(
+					`/api/search-location?q=${encodeURIComponent(value)}&session_token=${encodeURIComponent(sessionToken)}&types=venue`
+				);
+				const jsonData = await res.json();
+				if (jsonData.success) {
+					suggestions = (jsonData.suggestions ?? []) as VenueSuggestion[];
+					suggestCache.set(cacheKey, suggestions);
+					showSuggestions = suggestions.length > 0;
+					noResultsHint = suggestions.length === 0;
+				} else {
+					suggestions = [];
+					showSuggestions = false;
+					noResultsHint = false;
+				}
+			} catch (err) {
+				console.error('Autocomplete error:', err);
+				toast.error('Could not load location suggestions.');
+				suggestions = [];
+				showSuggestions = false;
+				noResultsHint = false;
+			}
+		}, DEBOUNCE_MS);
+	}
 
-    function selectSuggestion(sugg: MapboxSuggestion) {
-        clientVenueQuery = sugg.place_name;
-        resolvedVenueName = sugg.text;
-        showSuggestions = false;
-        suggestions = [];
-        
-        // Optionally trigger the estimate immediately upon selection
-        handleEstimateTravel();
-    }
+	function selectSuggestion(sugg: VenueSuggestion) {
+		clientVenueQuery = sugg.full_address || sugg.place_formatted || sugg.name;
+		selectedMapboxId = sugg.mapbox_id;
+		// show selected immediately, then estimate will rotate token
+		resolvedVenueName = sugg.name;
+		showSuggestions = false;
+		noResultsHint = false;
+		suggestions = [];
+		resetIdleTimer();
+		// Optionally trigger the estimate immediately upon selection
+		handleEstimateTravel();
+	}
 
-    // Close suggestions when clicking outside
-    function closeSuggestions() {
-        setTimeout(() => { showSuggestions = false; }, BLUR_TIMEOUT_MS);
-    }
+	// Close suggestions when clicking outside
+	function closeSuggestions() {
+		setTimeout(() => {
+			showSuggestions = false;
+		}, BLUR_TIMEOUT_MS);
+	}
 
 	// Calendar logic
 	const months = [
-		'January', 'February', 'March', 'April', 'May', 'June',
-		'July', 'August', 'September', 'October', 'November', 'December'
+		'January',
+		'February',
+		'March',
+		'April',
+		'May',
+		'June',
+		'July',
+		'August',
+		'September',
+		'October',
+		'November',
+		'December'
 	];
 	const daysOfWeek = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
 
@@ -312,7 +411,7 @@
 	let whatsappInquiryUrl = $derived.by(() => {
 		const dateText = targetDate ? ` on ${fmtDate(targetDate)}` : '';
 		let message = `Hi ${data.studioName}! I checked your availability${dateText}. Are you available to cover my bridal event?`;
-		
+
 		if (estimatedTravelFee !== null && estimatedTravelFee > 0) {
 			message += ` My venue is at ${resolvedVenueName} (estimated travel fee: ${fmtCurrency(estimatedTravelFee)} for ${estimatedDistance} km).`;
 		}
@@ -350,19 +449,20 @@
 			<Card.Header>
 				<Card.Title>Check date availability</Card.Title>
 				<Card.Description>
-					{data.workingHoursStart} – {data.workingHoursEnd} daily · See booked time slots before reaching out.
+					{data.workingHoursStart} – {data.workingHoursEnd} daily · See booked time slots before reaching
+					out.
 				</Card.Description>
 			</Card.Header>
 			<Card.Content class="space-y-4">
 				<!-- Calendar -->
 				<div class="border-border bg-card rounded-lg border">
 					<div class="flex items-center justify-between px-4 py-3">
-					<button
-						type="button"
-						onclick={() => navigateMonth(-1)}
-						class="hover:bg-muted focus-visible:ring-ring flex min-h-11 min-w-11 items-center justify-center rounded-md transition-colors focus-visible:ring-2 focus-visible:ring-offset-1"
-						aria-label="Previous month"
-					>
+						<button
+							type="button"
+							onclick={() => navigateMonth(-1)}
+							class="hover:bg-muted focus-visible:ring-ring flex min-h-11 min-w-11 items-center justify-center rounded-md transition-colors focus-visible:ring-2 focus-visible:ring-offset-1"
+							aria-label="Previous month"
+						>
 							<svg
 								class="h-4 w-4"
 								fill="none"
@@ -378,12 +478,12 @@
 							</svg>
 						</button>
 						<p class="text-sm font-semibold">{months[currentMonth]} {currentYear}</p>
-					<button
-						type="button"
-						onclick={() => navigateMonth(1)}
-						class="hover:bg-muted focus-visible:ring-ring flex min-h-11 min-w-11 items-center justify-center rounded-md transition-colors focus-visible:ring-2 focus-visible:ring-offset-1"
-						aria-label="Next month"
-					>
+						<button
+							type="button"
+							onclick={() => navigateMonth(1)}
+							class="hover:bg-muted focus-visible:ring-ring flex min-h-11 min-w-11 items-center justify-center rounded-md transition-colors focus-visible:ring-2 focus-visible:ring-offset-1"
+							aria-label="Next month"
+						>
 							<svg
 								class="h-4 w-4"
 								fill="none"
@@ -422,7 +522,7 @@
 											type="button"
 											onclick={() => selectDay(day)}
 											disabled={isPast(day)}
-											class="relative flex min-h-11 min-w-11 items-center justify-center rounded-md text-sm transition-colors focus-visible:ring-ring focus-visible:ring-2 focus-visible:ring-offset-1
+											class="focus-visible:ring-ring relative flex min-h-11 min-w-11 items-center justify-center rounded-md text-sm transition-colors focus-visible:ring-2 focus-visible:ring-offset-1
 												{isSelected(day)
 												? 'bg-primary text-primary-foreground font-semibold'
 												: isPast(day)
@@ -436,13 +536,16 @@
 											{day}
 											<!-- Slot count badge -->
 											{#if slotCount > 0 && !isSelected(day) && !blackedOut}
-												<span class="absolute -top-0.5 -right-0.5 flex min-h-[14px] min-w-[14px] items-center justify-center rounded-full bg-primary/80 text-[9px] font-medium text-white leading-none px-1">
+												<span
+													class="bg-primary/80 absolute -top-0.5 -right-0.5 flex min-h-[14px] min-w-[14px] items-center justify-center rounded-full px-1 text-[9px] leading-none font-medium text-white"
+												>
 													{slotCount}
 												</span>
 											{/if}
 											<!-- Blackout dot -->
 											{#if blackedOut && !isSelected(day)}
-												<span class="bg-destructive/60 absolute bottom-0.5 h-1 w-1 rounded-full"></span>
+												<span class="bg-destructive/60 absolute bottom-0.5 h-1 w-1 rounded-full"
+												></span>
 											{/if}
 										</button>
 									</div>
@@ -485,39 +588,46 @@
 						{:else}
 							<!-- Working hours bar -->
 							<div class="flex items-center gap-2 px-1">
-								<span class="text-[11px] font-medium text-muted-foreground">{data.workingHoursStart}</span>
-								<div class="bg-muted/50 flex-1 h-1.5 rounded-full overflow-hidden relative">
+								<span class="text-muted-foreground text-[11px] font-medium"
+									>{data.workingHoursStart}</span
+								>
+								<div class="bg-muted/50 relative h-1.5 flex-1 overflow-hidden rounded-full">
 									<div class="absolute inset-0 grid grid-cols-12 gap-0.5 px-0.5">
 										{#each Array(12) as _, i}
 											<div class="bg-muted-foreground/10 h-full w-full rounded-full"></div>
 										{/each}
 									</div>
 								</div>
-								<span class="text-[11px] font-medium text-muted-foreground">{data.workingHoursEnd}</span>
+								<span class="text-muted-foreground text-[11px] font-medium"
+									>{data.workingHoursEnd}</span
+								>
 							</div>
 
 							<!-- Booked sessions list -->
 							{#if selectedSlots.length > 0}
 								<div class="space-y-2">
-									<p class="text-xs font-medium text-muted-foreground">
+									<p class="text-muted-foreground text-xs font-medium">
 										{selectedSlots.length} session{selectedSlots.length !== 1 ? 's' : ''} booked
 									</p>
 									{#each selectedSlots as slot}
-										<div class="border-border bg-muted/30 flex items-center gap-3 rounded-lg border p-3">
+										<div
+											class="border-border bg-muted/30 flex items-center gap-3 rounded-lg border p-3"
+										>
 											<div class="shrink-0 text-center">
 												<p class="text-xs font-semibold tabular-nums">
 													{fmtTime(slot.time)}
 												</p>
-												<p class="text-[10px] text-muted-foreground">
+												<p class="text-muted-foreground text-[10px]">
 													→ {slotEnd(slot.time, slot.durationHours)}
 												</p>
 											</div>
 											<div class="bg-muted-foreground/20 h-8 w-px"></div>
 											<div class="min-w-0 flex-1">
-												<p class="text-sm font-medium truncate">
-													{slot.packageEmoji} {slot.packageName}
+												<p class="truncate text-sm font-medium">
+													{slot.packageEmoji}
+													{slot.packageName}
 												</p>
-												<p class="text-xs text-muted-foreground truncate">
+												<p class="text-muted-foreground truncate text-xs">
 													{slot.clientName}
 												</p>
 											</div>
@@ -534,7 +644,11 @@
 											stroke="currentColor"
 											stroke-width="2"
 										>
-											<path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+											<path
+												stroke-linecap="round"
+												stroke-linejoin="round"
+												d="M4.5 12.75l6 6 9-13.5"
+											/>
 										</svg>
 										<p class="text-primary text-sm font-medium">Available all day</p>
 									</div>
@@ -565,10 +679,15 @@
 
 		<!-- Interactive Travel Surcharge Calculator (only if coordinates & rate are set) -->
 		{#if data.baseLat && data.baseLng && data.ratePerKm > 0}
-			<Card.Root class="animate-in-up relative {showSuggestions ? 'z-50' : 'z-20'} overflow-visible" style="--i: 2">
+			<Card.Root
+				class="animate-in-up relative {showSuggestions ? 'z-50' : 'z-20'} overflow-visible"
+				style="--i: 2"
+			>
 				<Card.Header>
 					<Card.Title>Estimate travel surcharge</Card.Title>
-					<Card.Description>Calculate road travel cost from our studio to your area.</Card.Description>
+					<Card.Description
+						>Calculate road travel cost from our studio to your area.</Card.Description
+					>
 				</Card.Header>
 				<Card.Content class="space-y-4 overflow-visible">
 					<div class="flex gap-2">
@@ -582,27 +701,35 @@
 								onblur={closeSuggestions}
 								autocomplete="off"
 							/>
-							
+
 							{#if showSuggestions}
-								<div class="absolute z-50 mt-1 w-full rounded-md border bg-popover text-popover-foreground shadow-md outline-none animate-in fade-in-0 zoom-in-95">
+								<div
+									class="bg-popover text-popover-foreground animate-in fade-in-0 zoom-in-95 absolute z-50 mt-1 w-full rounded-md border shadow-md outline-none"
+								>
 									<ul class="p-1">
-										{#each suggestions as sugg}
+										{#each suggestions as sugg (sugg.mapbox_id)}
 											<li>
 												<button
 													type="button"
-													class="w-full rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent hover:text-accent-foreground focus-visible:ring-ring focus-visible:ring-2 focus-visible:ring-offset-1"
+													class="hover:bg-accent hover:text-accent-foreground focus-visible:ring-ring w-full rounded-sm px-2 py-1.5 text-left text-sm focus-visible:ring-2 focus-visible:ring-offset-1"
 													onclick={() => selectSuggestion(sugg)}
 												>
-													<p class="font-medium">{sugg.text}</p>
-													<p class="text-muted-foreground line-clamp-1 text-[11px]">{sugg.place_name}</p>
+													<p class="font-medium">{sugg.name}</p>
+													<p class="text-muted-foreground line-clamp-1 text-[11px]">
+														{sugg.place_formatted || sugg.full_address}
+													</p>
 												</button>
 											</li>
 										{/each}
 									</ul>
 								</div>
+							{:else if noResultsHint}
+								<p class="text-muted-foreground mt-2 px-1 text-xs">
+									No places found — try broader area like 'Damansara, Petaling Jaya'
+								</p>
 							{/if}
 						</div>
-			
+
 						<Button
 							variant="outline"
 							onclick={handleEstimateTravel}
@@ -611,8 +738,19 @@
 						>
 							{#if calculatingTravel}
 								<svg class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
-									<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
-									<path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+									<circle
+										class="opacity-25"
+										cx="12"
+										cy="12"
+										r="10"
+										stroke="currentColor"
+										stroke-width="4"
+									/>
+									<path
+										class="opacity-75"
+										fill="currentColor"
+										d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"
+									/>
 								</svg>
 							{:else}
 								Estimate
@@ -621,12 +759,17 @@
 					</div>
 
 					{#if estimatedTravelFee !== null && estimatedDistance !== null}
-						<div class="animate-reveal border-primary/20 bg-primary/5 space-y-1 rounded-lg border p-4 text-center">
+						<div
+							class="animate-reveal border-primary/20 bg-primary/5 space-y-1 rounded-lg border p-4 text-center"
+						>
 							<p class="text-primary text-sm font-semibold">
 								Estimated travel surcharge: {fmtCurrency(estimatedTravelFee)}
 							</p>
 							<p class="text-muted-foreground text-xs">
-								One way distance is approximately <span class="font-semibold">{estimatedDistance} km</span> to <span class="font-semibold">{resolvedVenueName}</span>.
+								One way distance is approximately <span class="font-semibold"
+									>{estimatedDistance} km</span
+								>
+								to <span class="font-semibold">{resolvedVenueName}</span>.
 							</p>
 						</div>
 					{/if}
@@ -639,9 +782,15 @@
 			<Card.Root class="animate-in-up overflow-hidden" style="--i: 3">
 				<Card.Header class="pb-3">
 					<Card.Title>Our studio base area</Card.Title>
-					<Card.Description>We operate and travel outwards from this base location.</Card.Description>
+					<Card.Description
+						>We operate and travel outwards from this base location.</Card.Description
+					>
 				</Card.Header>
-				<div id="map-container" class="h-72 w-full border-t border-border opacity-0 transition-opacity duration-300" style:--map-loaded="0"></div>
+				<div
+					id="map-container"
+					class="border-border h-72 w-full border-t opacity-0 transition-opacity duration-300"
+					style:--map-loaded="0"
+				></div>
 			</Card.Root>
 		{/if}
 
@@ -649,7 +798,9 @@
 		<Card.Root class="animate-in-up" style="--i: 4">
 			<Card.Header>
 				<Card.Title>Service packages</Card.Title>
-				<Card.Description>Available services and pricing. Each includes the session duration.</Card.Description>
+				<Card.Description
+					>Available services and pricing. Each includes the session duration.</Card.Description
+				>
 			</Card.Header>
 			<Card.Content>
 				{#if data.packages.length > 0}
@@ -664,7 +815,7 @@
 									</span>
 									<div>
 										<span class="text-sm font-medium">{pkg.name}</span>
-										<p class="text-[11px] text-muted-foreground">{pkg.duration_hours} hrs</p>
+										<p class="text-muted-foreground text-[11px]">{pkg.duration_hours} hrs</p>
 									</div>
 								</div>
 								<span class="text-sm font-semibold tabular-nums">
@@ -733,11 +884,13 @@
 		opacity: 1 !important;
 	}
 
-:global(.leaflet-control-zoom) {
+	:global(.leaflet-control-zoom) {
 		border: none !important;
 		border-radius: 8px !important;
 		overflow: hidden;
-		box-shadow: 0 1px 3px rgb(0 0 0 / 0.08), 0 1px 2px rgb(0 0 0 / 0.04) !important;
+		box-shadow:
+			0 1px 3px rgb(0 0 0 / 0.08),
+			0 1px 2px rgb(0 0 0 / 0.04) !important;
 	}
 
 	:global(.leaflet-control-zoom a) {

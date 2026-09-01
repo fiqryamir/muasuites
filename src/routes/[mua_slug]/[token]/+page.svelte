@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { onDestroy } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
+	import { browser } from '$app/environment';
 	import { enhance } from '$app/forms';
 	import { toast } from 'svelte-sonner';
 	import * as Card from '$lib/components/ui/card';
@@ -26,6 +27,26 @@
 	let selectedDate = $state('');
 	let selectedPackage = $state<any>(null);
 	let venueAddress = $state('');
+	let venueMapboxId = $state<string | null>(null);
+	let venueLat = $state<number | null>(null);
+	let venueLng = $state<number | null>(null);
+	let venueFullAddress = $state<string>('');
+	let venueSessionToken = $state('');
+	let venueSuggestions = $state<
+		{
+			mapbox_id: string;
+			name: string;
+			full_address: string;
+			place_formatted: string;
+			feature_type: string;
+		}[]
+	>([]);
+	let showVenueSuggestions = $state(false);
+	let venueNoResults = $state(false);
+	let venueSearchTimeout: ReturnType<typeof setTimeout> | undefined;
+	let venueSessionIdle: ReturnType<typeof setTimeout> | undefined;
+	const VENUE_DEBOUNCE_MS = 300;
+	const SESSION_IDLE_MS = 10 * 60 * 1000;
 	let clientName = $state('');
 	let clientPhone = $state('');
 
@@ -258,7 +279,8 @@
 		const reqEndMins = timeToMinutes(eventTime) + selectedPackage.duration_hours * 60;
 		for (const slot of selectedSlots) {
 			const slotStart = slot.time;
-			const slotEndMins = timeToMinutes(slot.time) + slot.durationHours * 60 + (slot.bufferMinutes || 0);
+			const slotEndMins =
+				timeToMinutes(slot.time) + slot.durationHours * 60 + (slot.bufferMinutes || 0);
 			const reqStartMins = timeToMinutes(reqStart);
 			if (reqStartMins < slotEndMins && reqEndMins > timeToMinutes(slotStart)) {
 				return true;
@@ -276,7 +298,9 @@
 	);
 
 	let isAfterWorkingHours = $derived(
-		!!selectedPackage && !!eventTime && (timeToMinutes(eventTime) + selectedPackage.duration_hours * 60) > whEndMinutes
+		!!selectedPackage &&
+			!!eventTime &&
+			timeToMinutes(eventTime) + selectedPackage.duration_hours * 60 > whEndMinutes
 	);
 
 	let timeBlocked = $derived(isTimeConflicting || isBeforeWorkingHours || isAfterWorkingHours);
@@ -330,6 +354,93 @@
 		}
 	});
 
+	function rotateVenueSession() {
+		try {
+			venueSessionToken = crypto.randomUUID();
+		} catch {
+			venueSessionToken = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+		}
+		if (venueSessionIdle) clearTimeout(venueSessionIdle);
+		venueSessionIdle = setTimeout(() => rotateVenueSession(), SESSION_IDLE_MS);
+	}
+
+	onMount(() => {
+		if (browser) rotateVenueSession();
+	});
+
+	function handleVenueInput(e: Event) {
+		const value = (e.target as HTMLInputElement).value;
+		venueAddress = value;
+		// Typing after picking clears mapbox selection so fallback geocode is used
+		if (venueMapboxId) {
+			venueMapboxId = null;
+			venueLat = null;
+			venueLng = null;
+			venueFullAddress = '';
+		}
+		if (venueSessionIdle) {
+			clearTimeout(venueSessionIdle);
+			venueSessionIdle = setTimeout(() => rotateVenueSession(), SESSION_IDLE_MS);
+		}
+		clearTimeout(venueSearchTimeout);
+		if (value.length < 3) {
+			venueSuggestions = [];
+			showVenueSuggestions = false;
+			venueNoResults = false;
+			return;
+		}
+		venueSearchTimeout = setTimeout(async () => {
+			try {
+				const res = await fetch(
+					`/api/search-location?q=${encodeURIComponent(value)}&session_token=${encodeURIComponent(venueSessionToken)}&types=venue`
+				);
+				const jsonData = await res.json();
+				if (jsonData.success) {
+					venueSuggestions = (jsonData.suggestions ?? []) as typeof venueSuggestions;
+					showVenueSuggestions = venueSuggestions.length > 0;
+					venueNoResults = venueSuggestions.length === 0;
+				}
+			} catch {
+				toast.error('Could not load location suggestions.');
+				venueSuggestions = [];
+				showVenueSuggestions = false;
+				venueNoResults = false;
+			}
+		}, VENUE_DEBOUNCE_MS);
+	}
+
+	async function selectVenueSuggestion(sugg: (typeof venueSuggestions)[number]) {
+		venueAddress = sugg.full_address || sugg.place_formatted || sugg.name;
+		venueFullAddress = sugg.full_address || sugg.place_formatted || sugg.name;
+		venueMapboxId = sugg.mapbox_id;
+		// Retrieve coordinates now so booking persists precise location
+		try {
+			const res = await fetch(
+				`/api/retrieve-location?id=${encodeURIComponent(sugg.mapbox_id)}&session_token=${encodeURIComponent(venueSessionToken)}`
+			);
+			const j = await res.json();
+			if (j.success && j.lng != null && j.lat != null) {
+				venueLng = j.lng;
+				venueLat = j.lat;
+				venueFullAddress = j.full_address || venueFullAddress;
+				venueAddress = venueFullAddress;
+			}
+		} catch {
+			// keep without coords; server will fallback to string geocode
+		}
+		showVenueSuggestions = false;
+		venueNoResults = false;
+		venueSuggestions = [];
+		if (venueSessionIdle) clearTimeout(venueSessionIdle);
+		venueSessionIdle = setTimeout(() => rotateVenueSession(), SESSION_IDLE_MS);
+	}
+
+	function closeVenueSuggestions() {
+		setTimeout(() => {
+			showVenueSuggestions = false;
+		}, 150);
+	}
+
 	function startTimer() {
 		if (timerIntervalId) clearInterval(timerIntervalId);
 		timerIntervalId = setInterval(() => {
@@ -338,7 +449,9 @@
 			} else {
 				clearInterval(timerIntervalId);
 				if (checkoutState === 'B') {
-					toast.error("Time's up — your slot was released. You can start again if you'd like to book.");
+					toast.error(
+						"Time's up — your slot was released. You can start again if you'd like to book."
+					);
 					setTimeout(() => window.location.reload(), 1500);
 				}
 			}
@@ -347,12 +460,15 @@
 
 	onDestroy(() => {
 		if (timerIntervalId) clearInterval(timerIntervalId);
+		if (venueSessionIdle) clearTimeout(venueSessionIdle);
 	});
 </script>
 
-<div class="bg-background flex min-h-screen flex-col items-center justify-center px-4 py-8 motion-safe:animate-in-up">
+<div
+	class="bg-background motion-safe:animate-in-up flex min-h-screen flex-col items-center justify-center px-4 py-8"
+>
 	<!-- Gate: Expired / Used -->
-		{#if data.gateState === 'USED' || data.gateState === 'EXPIRED'}
+	{#if data.gateState === 'USED' || data.gateState === 'EXPIRED'}
 		<div class="motion-safe:animate-in-up w-full max-w-sm space-y-6 text-center">
 			<div class="bg-muted mx-auto flex h-14 w-14 items-center justify-center rounded-full">
 				<svg
@@ -410,21 +526,31 @@
 			<div class="motion-safe:animate-in-up w-full max-w-md">
 				<!-- Studio name header -->
 				<div class="mb-6 space-y-1 text-center">
-					<p class="text-xs font-medium text-muted-foreground">
-						Booking with
-					</p>
+					<p class="text-muted-foreground text-xs font-medium">Booking with</p>
 					<p class="text-base font-semibold tracking-tight">{data.studioName}</p>
 				</div>
 
 				<Card.Root>
 					<!-- Step indicator -->
 					<Card.Header class="pb-4 text-center">
-						<div class="mb-3 flex items-center justify-center gap-1.5" role="tablist" aria-label="Booking steps">
+						<div
+							class="mb-3 flex items-center justify-center gap-1.5"
+							role="tablist"
+							aria-label="Booking steps"
+						>
 							{#each [1, 2, 3, 4, 5] as step}
 								<div
 									role="tab"
 									aria-current={step === currentStep ? 'step' : undefined}
-									aria-label="Step {step}: {step === 1 ? 'Choose date' : step === 2 ? 'Select package' : step === 3 ? 'Time and venue' : step === 4 ? 'Your details' : 'Review and confirm'}"
+									aria-label="Step {step}: {step === 1
+										? 'Choose date'
+										: step === 2
+											? 'Select package'
+											: step === 3
+												? 'Time and venue'
+												: step === 4
+													? 'Your details'
+													: 'Review and confirm'}"
 									class="h-1.5 rounded-full transition-all duration-300 {step < currentStep
 										? 'bg-primary w-4'
 										: step === currentStep
@@ -433,10 +559,10 @@
 								></div>
 							{/each}
 						</div>
-				<Card.Title class="text-lg">
-						{#if currentStep === 1}Choose your date{:else if currentStep === 2}Select a package{:else if currentStep === 3}Event
-							details{:else if currentStep === 4}Your details{:else}Review & confirm{/if}
-					</Card.Title>
+						<Card.Title class="text-lg">
+							{#if currentStep === 1}Choose your date{:else if currentStep === 2}Select a package{:else if currentStep === 3}Event
+								details{:else if currentStep === 4}Your details{:else}Review & confirm{/if}
+						</Card.Title>
 						<Card.Description class="text-xs">Step {currentStep} of 5</Card.Description>
 					</Card.Header>
 
@@ -448,11 +574,11 @@
 							<div class="space-y-4">
 								<div class="border-border bg-card rounded-lg border">
 									<div class="flex items-center justify-between px-4 py-3">
-								<button
-														type="button"
-														onclick={() => navigateMonth(-1)}
-														class="hover:bg-muted focus-visible:ring-ring flex min-h-11 min-w-11 items-center justify-center rounded-md transition-colors focus-visible:ring-2 focus-visible:ring-offset-1"
-														aria-label="Previous month"
+										<button
+											type="button"
+											onclick={() => navigateMonth(-1)}
+											class="hover:bg-muted focus-visible:ring-ring flex min-h-11 min-w-11 items-center justify-center rounded-md transition-colors focus-visible:ring-2 focus-visible:ring-offset-1"
+											aria-label="Previous month"
 										>
 											<svg
 												class="h-4 w-4"
@@ -469,11 +595,11 @@
 											</svg>
 										</button>
 										<p class="text-sm font-semibold">{months[currentMonth]} {currentYear}</p>
-								<button
-														type="button"
-														onclick={() => navigateMonth(1)}
-														class="hover:bg-muted focus-visible:ring-ring flex min-h-11 min-w-11 items-center justify-center rounded-md transition-colors focus-visible:ring-2 focus-visible:ring-offset-1"
-														aria-label="Next month"
+										<button
+											type="button"
+											onclick={() => navigateMonth(1)}
+											class="hover:bg-muted focus-visible:ring-ring flex min-h-11 min-w-11 items-center justify-center rounded-md transition-colors focus-visible:ring-2 focus-visible:ring-offset-1"
+											aria-label="Next month"
 										>
 											<svg
 												class="h-4 w-4"
@@ -526,12 +652,16 @@
 														>
 															{day}
 															{#if slotCount > 0 && !isSelected(day) && !blackedOut}
-																<span class="absolute -top-0.5 -right-0.5 flex min-h-[14px] min-w-[14px] items-center justify-center rounded-full bg-muted-foreground/60 text-[9px] font-medium text-white leading-none px-1">
+																<span
+																	class="bg-muted-foreground/60 absolute -top-0.5 -right-0.5 flex min-h-[14px] min-w-[14px] items-center justify-center rounded-full px-1 text-[9px] leading-none font-medium text-white"
+																>
 																	{slotCount}
 																</span>
 															{/if}
 															{#if blackedOut && !isSelected(day)}
-																<span class="bg-destructive/60 absolute bottom-0.5 h-1 w-1 rounded-full"></span>
+																<span
+																	class="bg-destructive/60 absolute bottom-0.5 h-1 w-1 rounded-full"
+																></span>
 															{/if}
 														</button>
 													</div>
@@ -548,7 +678,9 @@
 										</div>
 
 										{#if selectedIsBlackout}
-											<div class="border-destructive/20 bg-destructive/5 space-y-1 rounded-lg border p-4">
+											<div
+												class="border-destructive/20 bg-destructive/5 space-y-1 rounded-lg border p-4"
+											>
 												<div class="flex items-center gap-2">
 													<svg
 														class="text-destructive h-4 w-4 shrink-0"
@@ -563,7 +695,9 @@
 															d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z"
 														/>
 													</svg>
-													<p class="text-destructive text-sm font-medium">Date unavailable (blocked)</p>
+													<p class="text-destructive text-sm font-medium">
+														Date unavailable (blocked)
+													</p>
 												</div>
 												<p class="text-muted-foreground pl-6 text-xs">
 													This date has been blocked by the MUA. Try a different date.
@@ -571,36 +705,43 @@
 											</div>
 										{:else}
 											<div class="flex items-center gap-2 px-1">
-												<span class="text-[11px] font-medium text-muted-foreground">{data.workingHoursStart}</span>
-												<div class="bg-muted/50 flex-1 h-1.5 rounded-full overflow-hidden relative">
+												<span class="text-muted-foreground text-[11px] font-medium"
+													>{data.workingHoursStart}</span
+												>
+												<div class="bg-muted/50 relative h-1.5 flex-1 overflow-hidden rounded-full">
 													<div class="absolute inset-0 grid grid-cols-12 gap-0.5 px-0.5">
 														{#each Array(12) as _, i}
 															<div class="bg-muted-foreground/10 h-full w-full rounded-full"></div>
 														{/each}
 													</div>
 												</div>
-												<span class="text-[11px] font-medium text-muted-foreground">{data.workingHoursEnd}</span>
+												<span class="text-muted-foreground text-[11px] font-medium"
+													>{data.workingHoursEnd}</span
+												>
 											</div>
 
 											{#if selectedSlots.length > 0}
 												<div class="space-y-2">
-													<p class="text-xs font-medium text-muted-foreground">
+													<p class="text-muted-foreground text-xs font-medium">
 														{selectedSlots.length} session{selectedSlots.length !== 1 ? 's' : ''} booked
 													</p>
 													{#each selectedSlots as slot}
-														<div class="border-border bg-muted/30 flex items-center gap-3 rounded-lg border p-3">
+														<div
+															class="border-border bg-muted/30 flex items-center gap-3 rounded-lg border p-3"
+														>
 															<div class="shrink-0 text-center">
 																<p class="text-xs font-semibold tabular-nums">
 																	{fmtTime(slot.time)}
 																</p>
-																<p class="text-[10px] text-muted-foreground">
+																<p class="text-muted-foreground text-[10px]">
 																	→ {slotEnd(slot.time, slot.durationHours)}
 																</p>
 															</div>
 															<div class="bg-muted-foreground/20 h-8 w-px"></div>
 															<div class="min-w-0 flex-1">
-																<p class="text-sm font-medium truncate">
-																	{slot.packageEmoji} {slot.packageName}
+																<p class="truncate text-sm font-medium">
+																	{slot.packageEmoji}
+																	{slot.packageName}
 																</p>
 															</div>
 														</div>
@@ -616,7 +757,11 @@
 															stroke="currentColor"
 															stroke-width="2"
 														>
-															<path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+															<path
+																stroke-linecap="round"
+																stroke-linejoin="round"
+																d="M4.5 12.75l6 6 9-13.5"
+															/>
 														</svg>
 														<p class="text-primary text-sm font-medium">Available all day</p>
 													</div>
@@ -641,9 +786,7 @@
 							<!-- STEP 2: Package -->
 						{:else if currentStep === 2}
 							<div class="space-y-3">
-								<p class="text-muted-foreground text-center text-sm">
-									What service do you need?
-								</p>
+								<p class="text-muted-foreground text-center text-sm">What service do you need?</p>
 								<div class="space-y-2">
 									{#each data.packages as pkg}
 										{@const selected = selectedPackage?.id === pkg.id}
@@ -658,19 +801,21 @@
 												? 'border-primary bg-primary/5 ring-primary ring-1'
 												: 'border-border hover:border-muted-foreground/30'}"
 										>
-									<div class="flex items-center gap-3">
-										<span
-											class="flex h-9 w-9 items-center justify-center rounded-md text-base {selected
-												? 'bg-primary/10'
-												: 'bg-muted'}"
-										>
-											{pkg.emoji}
-										</span>
-										<div>
-											<span class="text-sm font-medium">{pkg.name}</span>
-											<p class="text-[11px] text-muted-foreground">{fmtDuration(pkg.duration_hours)}</p>
-										</div>
-									</div>
+											<div class="flex items-center gap-3">
+												<span
+													class="flex h-9 w-9 items-center justify-center rounded-md text-base {selected
+														? 'bg-primary/10'
+														: 'bg-muted'}"
+												>
+													{pkg.emoji}
+												</span>
+												<div>
+													<span class="text-sm font-medium">{pkg.name}</span>
+													<p class="text-muted-foreground text-[11px]">
+														{fmtDuration(pkg.duration_hours)}
+													</p>
+												</div>
+											</div>
 											<span class="text-sm font-semibold tabular-nums"
 												>{fmtCurrency(parseFloat(pkg.price))}</span
 											>
@@ -740,12 +885,19 @@
 									<p class="text-muted-foreground px-2 text-[11px]">
 										Starts at <span class="text-foreground font-medium">{eventTimeDisplay}</span>
 										{#if selectedPackage}
-											&middot; ends ~<span class="text-foreground font-medium">{slotEnd(eventTime, selectedPackage.duration_hours)}</span>
-											&middot; <span class="text-foreground font-medium">{fmtDuration(selectedPackage.duration_hours)}</span>
+											&middot; ends ~<span class="text-foreground font-medium"
+												>{slotEnd(eventTime, selectedPackage.duration_hours)}</span
+											>
+											&middot;
+											<span class="text-foreground font-medium"
+												>{fmtDuration(selectedPackage.duration_hours)}</span
+											>
 										{/if}
 									</p>
 									{#if isBeforeWorkingHours}
-										<div class="border-destructive/20 bg-destructive/5 mt-1 space-y-1 rounded-lg border p-3">
+										<div
+											class="border-destructive/20 bg-destructive/5 mt-1 space-y-1 rounded-lg border p-3"
+										>
 											<div class="flex items-center gap-2">
 												<svg
 													class="text-destructive h-4 w-4 shrink-0"
@@ -754,16 +906,23 @@
 													stroke="currentColor"
 													stroke-width="2"
 												>
-													<path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
+													<path
+														stroke-linecap="round"
+														stroke-linejoin="round"
+														d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z"
+													/>
 												</svg>
 												<p class="text-destructive text-xs font-medium">Before working hours</p>
 											</div>
 											<p class="text-muted-foreground pl-6 text-xs">
-												{data.studioName} starts at {fmtTime(data.workingHoursStart)}. Please pick a time from then onwards.
+												{data.studioName} starts at {fmtTime(data.workingHoursStart)}. Please pick a
+												time from then onwards.
 											</p>
 										</div>
 									{:else if isAfterWorkingHours}
-										<div class="border-destructive/20 bg-destructive/5 mt-1 space-y-1 rounded-lg border p-3">
+										<div
+											class="border-destructive/20 bg-destructive/5 mt-1 space-y-1 rounded-lg border p-3"
+										>
 											<div class="flex items-center gap-2">
 												<svg
 													class="text-destructive h-4 w-4 shrink-0"
@@ -772,16 +931,23 @@
 													stroke="currentColor"
 													stroke-width="2"
 												>
-													<path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
+													<path
+														stroke-linecap="round"
+														stroke-linejoin="round"
+														d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z"
+													/>
 												</svg>
 												<p class="text-destructive text-xs font-medium">Past working hours</p>
 											</div>
 											<p class="text-muted-foreground pl-6 text-xs">
-												This {fmtDuration(selectedPackage?.duration_hours || 3)} session would extend past {fmtTime(data.workingHoursEnd)}. Please pick an earlier time.
+												This {fmtDuration(selectedPackage?.duration_hours || 3)} session would extend
+												past {fmtTime(data.workingHoursEnd)}. Please pick an earlier time.
 											</p>
 										</div>
 									{:else if isTimeConflicting}
-										<div class="border-destructive/20 bg-destructive/5 mt-1 space-y-1 rounded-lg border p-3">
+										<div
+											class="border-destructive/20 bg-destructive/5 mt-1 space-y-1 rounded-lg border p-3"
+										>
 											<div class="flex items-center gap-2">
 												<svg
 													class="text-destructive h-4 w-4 shrink-0"
@@ -790,7 +956,11 @@
 													stroke="currentColor"
 													stroke-width="2"
 												>
-													<path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
+													<path
+														stroke-linecap="round"
+														stroke-linejoin="round"
+														d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z"
+													/>
 												</svg>
 												<p class="text-destructive text-xs font-medium">Time conflict</p>
 											</div>
@@ -805,13 +975,44 @@
 
 								<Field class="gap-2">
 									<FieldLabel>Venue address</FieldLabel>
-									<Input
-										id="address"
-										placeholder="e.g., Grand Hyatt KL, Shah Alam residence"
-										bind:value={venueAddress}
-										required
-										class="bg-muted rounded-full border-none px-4"
-									/>
+									<div class="relative">
+										<Input
+											id="address"
+											placeholder="e.g., Grand Hyatt KL, Shah Alam residence"
+											value={venueAddress}
+											oninput={handleVenueInput}
+											onblur={closeVenueSuggestions}
+											required
+											autocomplete="off"
+											class="bg-muted rounded-full border-none px-4"
+										/>
+										{#if showVenueSuggestions && venueSuggestions.length > 0}
+											<div
+												class="bg-popover text-popover-foreground animate-in fade-in-0 zoom-in-95 absolute z-50 mt-1 w-full rounded-md border shadow-md outline-none"
+											>
+												<ul class="p-1">
+													{#each venueSuggestions as sugg (sugg.mapbox_id)}
+														<li>
+															<button
+																type="button"
+																class="hover:bg-accent hover:text-accent-foreground w-full rounded-sm px-2 py-1.5 text-left text-sm"
+																onclick={() => selectVenueSuggestion(sugg)}
+															>
+																<p class="font-medium">{sugg.name}</p>
+																<p class="text-muted-foreground line-clamp-1 text-[11px]">
+																	{sugg.place_formatted || sugg.full_address}
+																</p>
+															</button>
+														</li>
+													{/each}
+												</ul>
+											</div>
+										{:else if venueNoResults}
+											<p class="text-muted-foreground mt-2 px-2 text-xs">
+												No places found — try broader area like 'Damansara, Petaling Jaya'
+											</p>
+										{/if}
+									</div>
 									{#if stepErrors.venueAddress}
 										<p class="text-destructive px-2 text-xs">{stepErrors.venueAddress}</p>
 									{/if}
@@ -824,7 +1025,9 @@
 									class="rounded-full px-6"
 									onclick={() => (currentStep = 2)}>Back</Button
 								>
-								<Button class="rounded-full px-6" disabled={timeBlocked} onclick={() => goNext(4)}>Continue</Button>
+								<Button class="rounded-full px-6" disabled={timeBlocked} onclick={() => goNext(4)}
+									>Continue</Button
+								>
 							</div>
 
 							<!-- STEP 4: Contact -->
@@ -903,9 +1106,14 @@
 										<div class="space-y-0.5">
 											<p class="text-muted-foreground text-xs">Time window</p>
 											<p class="text-sm font-medium">
-												{eventTimeDisplay} &rarr; {slotEnd(eventTime, selectedPackage?.duration_hours || 3)}
+												{eventTimeDisplay} &rarr; {slotEnd(
+													eventTime,
+													selectedPackage?.duration_hours || 3
+												)}
 											</p>
-											<p class="text-muted-foreground text-[11px]">{fmtDuration(selectedPackage?.duration_hours || 3)} session</p>
+											<p class="text-muted-foreground text-[11px]">
+												{fmtDuration(selectedPackage?.duration_hours || 3)} session
+											</p>
 										</div>
 									</div>
 									<div class="flex items-center justify-between py-3">
@@ -979,6 +1187,11 @@
 									<input type="hidden" name="client_name" value={clientName} />
 									<input type="hidden" name="client_phone" value={`60${clientPhone}`} />
 									<input type="hidden" name="venue_address" value={venueAddress} />
+									<input type="hidden" name="venue_full_address" value={venueFullAddress} />
+									<input type="hidden" name="venue_lat" value={venueLat ?? ''} />
+									<input type="hidden" name="venue_lng" value={venueLng ?? ''} />
+									<input type="hidden" name="mapbox_id" value={venueMapboxId ?? ''} />
+									<input type="hidden" name="session_token" value={venueSessionToken} />
 									<input type="hidden" name="total_amount" value={totalAmount} />
 									<input type="hidden" name="deposit_amount" value={depositAmount} />
 									<input type="hidden" name="balance_amount" value={balanceAmount} />
@@ -1000,17 +1213,17 @@
 
 			<!-- STATE B: Payment -->
 		{:else if checkoutState === 'B'}
-		{@const qrUrl = form?.bankConfig?.duitnow_qr_url || data.defaultConfig?.duitnow_qr_url}
+			{@const qrUrl = form?.bankConfig?.duitnow_qr_url || data.defaultConfig?.duitnow_qr_url}
 			{@const studioName = form?.bankConfig?.studio_name || data.defaultConfig?.studio_name}
 			{@const whatsapp = form?.bankConfig?.whatsapp_number || data.defaultConfig?.whatsapp_number}
 			<div class="motion-safe:animate-in-up w-full max-w-md space-y-6">
-			<div class="space-y-2">
-				<div class="flex items-center justify-between">
-					<p class="text-xs font-medium text-muted-foreground">
-						Reservation expires in
-					</p>
-					<p aria-live="polite" class="text-primary text-sm font-semibold tabular-nums">{timerString}</p>
-				</div>
+				<div class="space-y-2">
+					<div class="flex items-center justify-between">
+						<p class="text-muted-foreground text-xs font-medium">Reservation expires in</p>
+						<p aria-live="polite" class="text-primary text-sm font-semibold tabular-nums">
+							{timerString}
+						</p>
+					</div>
 					<div class="bg-muted h-1 w-full overflow-hidden rounded-full">
 						<div
 							class="bg-primary h-full rounded-full transition-all duration-1000 ease-linear"
@@ -1033,15 +1246,11 @@
 							<p class="text-muted-foreground mb-1 text-xs">Bank</p>
 							<!-- 👇 USE THE CONST VARIABLE HERE -->
 							<p class="text-sm font-medium">{studioName}</p>
-							
+
 							<!-- 👇 USE THE CONST VARIABLE HERE -->
 							{#if qrUrl}
 								<div class="border-border bg-card mt-4 flex justify-center rounded-lg border p-6">
-									<img
-										src={qrUrl}
-										alt="DuitNow QR"
-										class="h-48 w-48 object-contain"
-									/>
+									<img src={qrUrl} alt="DuitNow QR" class="h-48 w-48 object-contain" />
 								</div>
 								<p class="text-muted-foreground mt-3 text-center text-xs">
 									Open your banking app and scan to pay.
@@ -1079,15 +1288,17 @@
 							<input type="hidden" name="invite_id" value={data.invite?.id} />
 							<Field class="gap-2">
 								<FieldLabel>Payment receipt</FieldLabel>
-								<Input 
-									id="receipt" 
-									name="receipt" 
-									type="file" 
-									accept="image/png,image/jpeg,image/webp" 
-									required 
+								<Input
+									id="receipt"
+									name="receipt"
+									type="file"
+									accept="image/png,image/jpeg,image/webp"
+									required
 									class=""
 								/>
-								<p class="px-2 text-xs text-muted-foreground">Upload a screenshot of your transfer confirmation. Max 5MB.</p>
+								<p class="text-muted-foreground px-2 text-xs">
+									Upload a screenshot of your transfer confirmation. Max 5MB.
+								</p>
 							</Field>
 							<Button type="submit" disabled={submitting} class="w-full">
 								{submitting ? 'Uploading...' : 'Upload receipt'}
