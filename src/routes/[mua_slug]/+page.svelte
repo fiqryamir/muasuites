@@ -256,6 +256,7 @@
 					showSuggestions = suggestions.length > 0;
 					noResultsHint = suggestions.length === 0;
 				} else {
+					toast.error('Could not load location suggestions.');
 					suggestions = [];
 					showSuggestions = false;
 					noResultsHint = false;

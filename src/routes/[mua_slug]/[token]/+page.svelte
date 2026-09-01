@@ -399,6 +399,11 @@
 					venueSuggestions = (jsonData.suggestions ?? []) as typeof venueSuggestions;
 					showVenueSuggestions = venueSuggestions.length > 0;
 					venueNoResults = venueSuggestions.length === 0;
+				} else {
+					toast.error('Could not load location suggestions.');
+					venueSuggestions = [];
+					showVenueSuggestions = false;
+					venueNoResults = false;
 				}
 			} catch {
 				toast.error('Could not load location suggestions.');
@@ -431,8 +436,7 @@
 		showVenueSuggestions = false;
 		venueNoResults = false;
 		venueSuggestions = [];
-		if (venueSessionIdle) clearTimeout(venueSessionIdle);
-		venueSessionIdle = setTimeout(() => rotateVenueSession(), SESSION_IDLE_MS);
+		rotateVenueSession();
 	}
 
 	function closeVenueSuggestions() {

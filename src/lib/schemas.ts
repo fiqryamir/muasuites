@@ -24,8 +24,15 @@ export const secureSlotSchema = z.object({
 	deposit_amount: z.coerce.number().nonnegative(),
 	balance_amount: z.coerce.number().nonnegative(),
 	// Canonical venue fields from Search Box retrieve (optional, persisted post-RPC)
-	venue_lat: z.coerce.number().min(-90).max(90).optional().nullable(),
-	venue_lng: z.coerce.number().min(-180).max(180).optional().nullable(),
+	// Empty string from hidden input should be treated as null, not 0
+	venue_lat: z.preprocess(
+		(v) => (v === '' || v == null ? null : v),
+		z.coerce.number().min(-90).max(90).optional().nullable()
+	),
+	venue_lng: z.preprocess(
+		(v) => (v === '' || v == null ? null : v),
+		z.coerce.number().min(-180).max(180).optional().nullable()
+	),
 	venue_full_address: z.string().optional().nullable(),
 	mapbox_id: z.string().optional().nullable(),
 	session_token: z.string().optional().nullable()

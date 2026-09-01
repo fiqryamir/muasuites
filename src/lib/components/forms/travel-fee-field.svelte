@@ -1,6 +1,6 @@
 <script lang="ts">
 	/* eslint-disable no-useless-assignment */
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 	import { toast } from 'svelte-sonner';
 	import { Input } from '$lib/components/ui/input';
 	import {
@@ -55,6 +55,9 @@
 	onMount(() => {
 		rotateSessionToken();
 	});
+	onDestroy(() => {
+		if (sessionIdleTimer) clearTimeout(sessionIdleTimer);
+	});
 
 	let rateStr = $state(String(ratePerKm));
 
@@ -107,6 +110,7 @@
 					showSuggestions = suggestions.length > 0;
 					noResultsHint = suggestions.length === 0;
 				} else {
+					toast.error('Could not load location suggestions.');
 					suggestions = [];
 					showSuggestions = false;
 					noResultsHint = false;
