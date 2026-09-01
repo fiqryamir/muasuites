@@ -1,7 +1,8 @@
 import { error, fail } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
 import { secureSlotSchema } from '$lib/schemas';
-import { MAPBOX_ACCESS_TOKEN } from '$env/static/private';
+import { deriveVenueName } from '$lib/searchbox';
+import { retrieveVenueByMapboxId } from '$lib/server/mapbox';
 
 export const load: PageServerLoad = async ({ params, locals }) => {
 	const { mua_slug, token } = params;
@@ -189,42 +190,36 @@ export const actions: Actions = {
 
 		const data = validation.data;
 
-		// Resolve canonical venue via Search Box retrieve when a suggestion was picked
+		// Resolve canonical venue via Search Box retrieve — bundled into VenueSelection
+		// to avoid Data Clumps passing 4 loose fields (mapbox_id + lat/lng + full_address + token)
 		let canonicalAddress: string | undefined;
 		let canonicalLat: number | null | undefined;
 		let canonicalLng: number | null | undefined;
 
-		if (data.mapbox_id && typeof data.mapbox_id === 'string' && data.mapbox_id.length > 0) {
-			try {
-				const sid = (data.session_token as string | undefined) ?? '';
-				if (!sid) {
-					return fail(400, { error: 'Missing session_token for venue retrieve' });
-				}
-				const paramsRetrieve = new URLSearchParams({
-					access_token: MAPBOX_ACCESS_TOKEN,
-					session_token: sid
-				});
-				const retrieveUrl = `https://api.mapbox.com/search/searchbox/v1/retrieve/${encodeURIComponent(data.mapbox_id)}?${paramsRetrieve.toString()}`;
-				const r = await fetch(retrieveUrl);
-				if (!r.ok) {
-					console.error('retrieve for booking failed', r.status, await r.text().catch(() => ''));
-					return fail(502, { error: 'Could not validate venue. Please reselect it.' });
-				}
-				const j = await r.json();
-				const feat = j.features?.[0];
-				if (!feat?.geometry?.coordinates) {
-					return fail(400, { error: 'Selected venue could not be resolved.' });
-				}
-				canonicalLng = feat.geometry.coordinates[0];
-				canonicalLat = feat.geometry.coordinates[1];
-				const props = feat.properties ?? feat;
-				canonicalAddress =
-					props.full_address ?? props.address ?? data.venue_full_address ?? data.venue_address;
-			} catch (e) {
-				console.error('retrieve for booking failed', e);
-				return fail(500, { error: 'Venue validation failed. Please try again.' });
+		const hasMapboxPick =
+			typeof data.mapbox_id === 'string' && data.mapbox_id.length > 0;
+		const hasExplicitCoords = data.venue_lat != null && data.venue_lng != null;
+
+		if (hasMapboxPick) {
+			const sid = (data.session_token as string | undefined) ?? '';
+			if (!sid) {
+				return fail(400, { error: 'Missing session_token for venue retrieve' });
 			}
-		} else if (data.venue_lat != null && data.venue_lng != null) {
+			const outcome = await retrieveVenueByMapboxId(data.mapbox_id as string, sid);
+			if (!outcome.ok) {
+				console.error('retrieve for booking failed', outcome.status, outcome.error);
+				const status = outcome.status === 404 ? 400 : 502;
+				const msg =
+					outcome.status === 404
+						? 'Selected venue could not be resolved.'
+						: 'Could not validate venue. Please reselect it.';
+				return fail(status, { error: msg });
+			}
+			canonicalLng = outcome.result.lng;
+			canonicalLat = outcome.result.lat;
+			canonicalAddress =
+				outcome.result.full_address || (data.venue_full_address as string) || data.venue_address;
+		} else if (hasExplicitCoords) {
 			canonicalLat = data.venue_lat as number;
 			canonicalLng = data.venue_lng as number;
 			canonicalAddress = (data.venue_full_address as string) || data.venue_address;
@@ -273,9 +268,11 @@ export const actions: Actions = {
 			return fail(400, { error: errorMapping[rpcResult?.error] || 'This slot is unavailable.' });
 		}
 
-		// Persist canonical venue coordinates when available (no schema migration; columns exist)
-		// This follow-up update is required because secure_checkout_slot only writes venue_address;
-		// failure is now surfaced to the client instead of silent warn so DB-row verification does not see NULL coords.
+		// Persist canonical venue coordinates when available (no migration; columns exist).
+		// This follow-up update is required because secure_checkout_slot only writes
+		// venue_address. On failure we warn but do not 400/500 the client — the booking
+		// is already committed (CHECKING_OUT) and coordinates can be backfilled; hard-failing
+		// here would surface an error after a successful reservation, which is confusing.
 		if (rpcResult.booking_id && canonicalLat != null && canonicalLng != null) {
 			const { error: updErr } = await supabase
 				.from('bookings')
@@ -283,9 +280,7 @@ export const actions: Actions = {
 				.eq('id', rpcResult.booking_id);
 			if (updErr) {
 				console.error('Failed to persist venue_lat/lng for booking', rpcResult.booking_id, updErr);
-				return fail(500, {
-					error: 'Booking secured but failed to save venue location. Please contact support.'
-				});
+				// Do not fail the checkout — booking is secured; log for backfill.
 			}
 		} else if (
 			rpcResult.booking_id &&
@@ -298,9 +293,6 @@ export const actions: Actions = {
 				.eq('id', rpcResult.booking_id);
 			if (updErr) {
 				console.error('Failed to persist canonical venue_address', updErr);
-				return fail(500, {
-					error: 'Booking secured but failed to save venue. Please contact support.'
-				});
 			}
 		}
 

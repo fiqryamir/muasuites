@@ -16,6 +16,9 @@
 	} from '$lib/components/ui/input-group';
 	import { Field, FieldGroup, FieldLabel } from '$lib/components/ui/field';
 	import { z } from 'zod';
+	import type { VenueSuggestion } from '$lib/searchbox';
+	import { MIN_QUERY_LENGTH } from '$lib/searchbox';
+	import { createSearchBoxSession } from '$lib/searchbox-session.svelte';
 
 	let { data, form } = $props();
 
@@ -31,24 +34,12 @@
 	let venueLat = $state<number | null>(null);
 	let venueLng = $state<number | null>(null);
 	let venueFullAddress = $state<string>('');
-	let venueSessionToken = $state('');
-	let venueSuggestions = $state<
-		{
-			mapbox_id: string;
-			name: string;
-			full_address: string;
-			place_formatted: string;
-			feature_type: string;
-		}[]
-	>([]);
+	let venueSuggestions = $state<VenueSuggestion[]>([]);
 	let showVenueSuggestions = $state(false);
 	let venueNoResults = $state(false);
 	let venueSearchTimeout: ReturnType<typeof setTimeout> | undefined;
-	let venueSessionIdle: ReturnType<typeof setTimeout> | undefined;
 	const VENUE_DEBOUNCE_MS = 300;
-	const SESSION_IDLE_MS = 10 * 60 * 1000;
-	// Suggest cache: query+types+session_token scoped in-memory (cleared on rotate) — parity with public estimator
-	const venueSuggestCache = new Map<string, typeof venueSuggestions>();
+	const bookingVenueSession = createSearchBoxSession();
 	let clientName = $state('');
 	let clientPhone = $state('');
 
@@ -356,19 +347,12 @@
 		}
 	});
 
-	function rotateVenueSession() {
-		try {
-			venueSessionToken = crypto.randomUUID();
-		} catch {
-			venueSessionToken = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-		}
-		venueSuggestCache.clear();
-		if (venueSessionIdle) clearTimeout(venueSessionIdle);
-		venueSessionIdle = setTimeout(() => rotateVenueSession(), SESSION_IDLE_MS);
-	}
-
 	onMount(() => {
-		if (browser) rotateVenueSession();
+		if (browser) bookingVenueSession.touch();
+	});
+
+	onDestroy(() => {
+		bookingVenueSession.destroy();
 	});
 
 	function handleVenueInput(e: Event) {
@@ -381,21 +365,18 @@
 			venueLng = null;
 			venueFullAddress = '';
 		}
-		if (venueSessionIdle) {
-			clearTimeout(venueSessionIdle);
-			venueSessionIdle = setTimeout(() => rotateVenueSession(), SESSION_IDLE_MS);
-		}
+		bookingVenueSession.touch();
 		clearTimeout(venueSearchTimeout);
-		if (value.length < 3) {
+		if (value.length < MIN_QUERY_LENGTH) {
 			venueSuggestions = [];
 			showVenueSuggestions = false;
 			venueNoResults = false;
 			return;
 		}
 
-		const suggestCacheKey = `${value.toLowerCase()}|venue|${venueSessionToken}`;
-		if (venueSuggestCache.has(suggestCacheKey)) {
-			venueSuggestions = venueSuggestCache.get(suggestCacheKey)!;
+		const suggestCacheKey = `${value.toLowerCase()}|venue|${bookingVenueSession.token}`;
+		if (bookingVenueSession.cache.has(suggestCacheKey)) {
+			venueSuggestions = bookingVenueSession.cache.get(suggestCacheKey)!;
 			showVenueSuggestions = venueSuggestions.length > 0;
 			venueNoResults = venueSuggestions.length === 0;
 			return;
@@ -404,22 +385,22 @@
 		venueSearchTimeout = setTimeout(async () => {
 			try {
 				const res = await fetch(
-					`/api/search-location?q=${encodeURIComponent(value)}&session_token=${encodeURIComponent(venueSessionToken)}&types=venue`
+					`/api/search-location?q=${encodeURIComponent(value)}&session_token=${encodeURIComponent(bookingVenueSession.token)}&types=venue`
 				);
 				const jsonData = await res.json();
 				if (jsonData.success) {
-					venueSuggestions = (jsonData.suggestions ?? []) as typeof venueSuggestions;
-					venueSuggestCache.set(suggestCacheKey, venueSuggestions);
+					venueSuggestions = (jsonData.suggestions ?? []) as VenueSuggestion[];
+					bookingVenueSession.cache.set(suggestCacheKey, venueSuggestions);
 					showVenueSuggestions = venueSuggestions.length > 0;
 					venueNoResults = venueSuggestions.length === 0;
 				} else {
-					toast.error('Could not load location suggestions.');
+					toast.error('Could not load Venue Suggestions.');
 					venueSuggestions = [];
 					showVenueSuggestions = false;
 					venueNoResults = false;
 				}
 			} catch {
-				toast.error('Could not load location suggestions.');
+				toast.error('Could not load Venue Suggestions.');
 				venueSuggestions = [];
 				showVenueSuggestions = false;
 				venueNoResults = false;
@@ -427,7 +408,7 @@
 		}, VENUE_DEBOUNCE_MS);
 	}
 
-	function selectVenueSuggestion(sugg: (typeof venueSuggestions)[number]) {
+	function selectVenueSuggestion(sugg: VenueSuggestion) {
 		venueAddress = sugg.full_address || sugg.place_formatted || sugg.name;
 		venueFullAddress = sugg.full_address || sugg.place_formatted || sugg.name;
 		venueMapboxId = sugg.mapbox_id;
@@ -439,10 +420,7 @@
 		showVenueSuggestions = false;
 		venueNoResults = false;
 		venueSuggestions = [];
-		if (venueSessionIdle) {
-			clearTimeout(venueSessionIdle);
-			venueSessionIdle = setTimeout(() => rotateVenueSession(), SESSION_IDLE_MS);
-		}
+		bookingVenueSession.touch();
 	}
 
 	function closeVenueSuggestions() {
@@ -470,7 +448,8 @@
 
 	onDestroy(() => {
 		if (timerIntervalId) clearInterval(timerIntervalId);
-		if (venueSessionIdle) clearTimeout(venueSessionIdle);
+		if (venueSearchTimeout) clearTimeout(venueSearchTimeout);
+		bookingVenueSession.destroy();
 	});
 </script>
 
@@ -1201,7 +1180,7 @@
 									<input type="hidden" name="venue_lat" value={venueLat ?? ''} />
 									<input type="hidden" name="venue_lng" value={venueLng ?? ''} />
 									<input type="hidden" name="mapbox_id" value={venueMapboxId ?? ''} />
-									<input type="hidden" name="session_token" value={venueSessionToken} />
+									<input type="hidden" name="session_token" value={bookingVenueSession.token} />
 									<input type="hidden" name="total_amount" value={totalAmount} />
 									<input type="hidden" name="deposit_amount" value={depositAmount} />
 									<input type="hidden" name="balance_amount" value={balanceAmount} />

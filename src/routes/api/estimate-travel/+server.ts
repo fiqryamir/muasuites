@@ -1,6 +1,12 @@
 import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { MAPBOX_ACCESS_TOKEN } from '$env/static/private'; // Secure private variable
+import { retrieveVenueByMapboxId } from '$lib/server/mapbox';
+import {
+	deriveGeocodeVenueName,
+	deriveVenueName,
+	type VenueSource
+} from '$lib/searchbox';
 
 export const POST: RequestHandler = async ({ request }) => {
 	try {
@@ -19,69 +25,53 @@ export const POST: RequestHandler = async ({ request }) => {
 			throw error(400, 'Missing required parameters.');
 		}
 
+		// Normalize into VenueSource union — replaces Repeated Switches on raw strings
+		const venueSource: VenueSource = mapboxId
+			? { kind: 'mapbox', mapboxId, sessionToken: sessionToken ?? '' }
+			: venue
+				? { kind: 'geocode', query: venue }
+				: { kind: 'none' };
+
 		let destLng: number | undefined;
 		let destLat: number | undefined;
 		let venueName: string | undefined;
 		let venueLat: number | undefined;
 		let venueLng: number | undefined;
 
-		if (mapboxId) {
-			if (!sessionToken) {
+		if (venueSource.kind === 'mapbox') {
+			if (!venueSource.sessionToken) {
 				return json(
 					{ success: false, error: 'Missing session_token for mapboxId retrieve' },
 					{ status: 400 }
 				);
 			}
-			// Preferred path: retrieve via Search Box using forwarded session_token
-			const params = new URLSearchParams({
-				access_token: MAPBOX_ACCESS_TOKEN,
-				session_token: sessionToken
-			});
-
-			const retrieveUrl = `https://api.mapbox.com/search/searchbox/v1/retrieve/${encodeURIComponent(mapboxId)}?${params.toString()}`;
-			const retrieveRes = await fetch(retrieveUrl);
-
-			if (!retrieveRes.ok) {
-				const text = await retrieveRes.text().catch(() => '');
-				console.error('Retrieve for estimate failed', retrieveRes.status, text);
-				return json(
-					{ success: false, error: 'Could not retrieve selected place.' },
-					{ status: retrieveRes.status === 404 ? 404 : 502 }
-				);
+			const outcome = await retrieveVenueByMapboxId(
+				venueSource.mapboxId,
+				venueSource.sessionToken
+			);
+			if (!outcome.ok) {
+				const message =
+					outcome.status === 404 ? 'Selected place not found.' : 'Could not retrieve selected place.';
+				return json({ success: false, error: message }, { status: outcome.status });
 			}
-
-			const retrieveData = await retrieveRes.json();
-			const feature = retrieveData.features?.[0];
-			if (!feature?.geometry?.coordinates) {
-				return json({ success: false, error: 'Selected place not found.' });
-			}
-
-			const [lng, lat] = feature.geometry.coordinates;
-			destLng = lng;
-			destLat = lat;
-			venueLng = lng;
-			venueLat = lat;
-
-			const props = feature.properties ?? feature;
-			const fullAddress: string =
-				props.full_address ?? props.address ?? feature.place_name ?? props.name ?? '';
-			const name: string = props.name ?? props.name_preferred ?? feature.name ?? fullAddress;
-			// venueName prefers first segment of full_address for POIs
-			if (fullAddress && fullAddress.includes(',')) {
-				venueName = fullAddress.split(',')[0].trim();
-			} else {
-				venueName = name || fullAddress;
-			}
-		} else if (venue) {
+			const r = outcome.result;
+			destLng = r.lng;
+			destLat = r.lat;
+			venueLng = r.lng;
+			venueLat = r.lat;
+			venueName = deriveVenueName(r);
+		} else if (venueSource.kind === 'geocode') {
 			// Fallback path: geocode free-form string with country=my limit=1
-			const geocodeUrl = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(venue)}.json?access_token=${MAPBOX_ACCESS_TOKEN}&limit=1&country=my`;
+			const geocodeUrl = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(venueSource.query)}.json?access_token=${MAPBOX_ACCESS_TOKEN}&limit=1&country=my`;
 			const geoRes = await fetch(geocodeUrl);
 			if (!geoRes.ok) {
 				const text = await geoRes.text().catch(() => '');
 				console.error('Geocode fallback failed', geoRes.status, text);
 				return json({ success: false, error: 'Failed to geocode venue.' }, { status: 502 });
 			}
-			const geoData = await geoRes.json();
+			const geoData = (await geoRes.json()) as {
+				features?: { center: number[]; place_name?: string; text?: string }[];
+			};
 
 			if (!geoData.features || geoData.features.length === 0) {
 				return json({ success: false, error: 'Destination address not found.' });
@@ -90,8 +80,7 @@ export const POST: RequestHandler = async ({ request }) => {
 			const destCoords = geoData.features[0].center; // [lng, lat]
 			destLng = destCoords[0];
 			destLat = destCoords[1];
-			venueName =
-				geoData.features[0].place_name?.split(',')[0]?.trim() || geoData.features[0].text || venue;
+			venueName = deriveGeocodeVenueName(geoData.features[0], venueSource.query);
 		}
 
 		if (destLng == null || destLat == null) {

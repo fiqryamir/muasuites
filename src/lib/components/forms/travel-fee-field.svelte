@@ -10,14 +10,9 @@
 		InputGroupText
 	} from '$lib/components/ui/input-group';
 	import { Field, FieldLabel } from '$lib/components/ui/field';
-
-	interface VenueSuggestion {
-		mapbox_id: string;
-		name: string;
-		full_address: string;
-		place_formatted: string;
-		feature_type: string;
-	}
+	import type { VenueSuggestion } from '$lib/searchbox';
+	import { MIN_QUERY_LENGTH } from '$lib/searchbox';
+	import { createSearchBoxSession } from '$lib/searchbox-session.svelte';
 
 	let {
 		placeName = $bindable(''),
@@ -32,31 +27,20 @@
 	} = $props();
 
 	let query = $state(placeName);
-	let suggestions = $state<VenueSuggestion[]>([]);
-	let showSuggestions = $state(false);
+	let venueSuggestions = $state<VenueSuggestion[]>([]);
+	let showVenueSuggestions = $state(false);
 	let searching = $state(false);
 	let focused = $state(false);
 	let noResultsHint = $state(false);
 	let searchTimeout: ReturnType<typeof setTimeout> | undefined;
-	let sessionToken = $state('');
-	let sessionIdleTimer: ReturnType<typeof setTimeout> | undefined;
-	const SESSION_IDLE_MS = 10 * 60 * 1000;
-
-	function rotateSessionToken() {
-		try {
-			sessionToken = crypto.randomUUID();
-		} catch {
-			sessionToken = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-		}
-		if (sessionIdleTimer) clearTimeout(sessionIdleTimer);
-		sessionIdleTimer = setTimeout(() => rotateSessionToken(), SESSION_IDLE_MS);
-	}
+	const searchSession = createSearchBoxSession();
 
 	onMount(() => {
-		rotateSessionToken();
+		// session token already generated; touch to reset idle window
+		searchSession.touch();
 	});
 	onDestroy(() => {
-		if (sessionIdleTimer) clearTimeout(sessionIdleTimer);
+		searchSession.destroy();
 	});
 
 	let rateStr = $state(String(ratePerKm));
@@ -87,14 +71,19 @@
 		const value = (e.target as HTMLInputElement).value;
 		query = value;
 		clearTimeout(searchTimeout);
-		if (sessionIdleTimer) {
-			clearTimeout(sessionIdleTimer);
-			sessionIdleTimer = setTimeout(() => rotateSessionToken(), SESSION_IDLE_MS);
-		}
-		if (value.length < 3) {
-			suggestions = [];
-			showSuggestions = false;
+		searchSession.touch();
+		if (value.length < MIN_QUERY_LENGTH) {
+			venueSuggestions = [];
+			showVenueSuggestions = false;
 			noResultsHint = false;
+			return;
+		}
+
+		const cacheKey = `${value.toLowerCase()}|base|${searchSession.token}`;
+		if (searchSession.cache.has(cacheKey)) {
+			venueSuggestions = searchSession.cache.get(cacheKey)!;
+			showVenueSuggestions = venueSuggestions.length > 0;
+			noResultsHint = venueSuggestions.length === 0;
 			return;
 		}
 
@@ -102,23 +91,24 @@
 			searching = true;
 			try {
 				const res = await fetch(
-					`/api/search-location?q=${encodeURIComponent(value)}&session_token=${encodeURIComponent(sessionToken)}&types=base`
+					`/api/search-location?q=${encodeURIComponent(value)}&session_token=${encodeURIComponent(searchSession.token)}&types=base`
 				);
 				const data = await res.json();
 				if (data.success) {
-					suggestions = (data.suggestions ?? []) as VenueSuggestion[];
-					showSuggestions = suggestions.length > 0;
-					noResultsHint = suggestions.length === 0;
+					venueSuggestions = (data.suggestions ?? []) as VenueSuggestion[];
+					searchSession.cache.set(cacheKey, venueSuggestions);
+					showVenueSuggestions = venueSuggestions.length > 0;
+					noResultsHint = venueSuggestions.length === 0;
 				} else {
-					toast.error('Could not load location suggestions.');
-					suggestions = [];
-					showSuggestions = false;
+					toast.error('Could not load Venue Suggestions.');
+					venueSuggestions = [];
+					showVenueSuggestions = false;
 					noResultsHint = false;
 				}
 			} catch {
-				toast.error('Could not load location suggestions.');
-				suggestions = [];
-				showSuggestions = false;
+				toast.error('Could not load Venue Suggestions.');
+				venueSuggestions = [];
+				showVenueSuggestions = false;
 				noResultsHint = false;
 			} finally {
 				searching = false;
@@ -126,11 +116,11 @@
 		}, 400);
 	}
 
-	async function selectSuggestion(sugg: VenueSuggestion) {
+	async function selectVenueSuggestion(sugg: VenueSuggestion) {
 		// Retrieve precise coordinates via Search Box retrieve using shared session_token
 		try {
 			const res = await fetch(
-				`/api/retrieve-location?id=${encodeURIComponent(sugg.mapbox_id)}&session_token=${encodeURIComponent(sessionToken)}`
+				`/api/retrieve-location?id=${encodeURIComponent(sugg.mapbox_id)}&session_token=${encodeURIComponent(searchSession.token)}`
 			);
 			const data = await res.json();
 			if (data.success && data.lng != null && data.lat != null) {
@@ -146,10 +136,10 @@
 			placeName = sugg.full_address || sugg.place_formatted || sugg.name;
 		}
 		query = placeName;
-		showSuggestions = false;
+		showVenueSuggestions = false;
 		noResultsHint = false;
-		suggestions = [];
-		rotateSessionToken();
+		venueSuggestions = [];
+		searchSession.rotate();
 	}
 
 	function clearLocation() {
@@ -157,14 +147,14 @@
 		lat = null;
 		lng = null;
 		query = '';
-		suggestions = [];
-		showSuggestions = false;
+		venueSuggestions = [];
+		showVenueSuggestions = false;
 		noResultsHint = false;
 	}
 
-	function closeSuggestions() {
+	function closeVenueSuggestions() {
 		setTimeout(() => {
-			showSuggestions = false;
+			showVenueSuggestions = false;
 		}, 150);
 	}
 </script>
@@ -181,7 +171,7 @@
 				onfocus={() => (focused = true)}
 				onblur={() => {
 					focused = false;
-					closeSuggestions();
+					closeVenueSuggestions();
 				}}
 				autocomplete="off"
 				class="bg-muted rounded-full border-none px-4"
@@ -191,17 +181,17 @@
 					Searching…
 				</span>
 			{/if}
-			{#if showSuggestions && suggestions.length > 0}
+			{#if showVenueSuggestions && venueSuggestions.length > 0}
 				<div
 					class="bg-popover text-popover-foreground animate-in fade-in-0 zoom-in-95 absolute z-50 mt-1 w-full rounded-md border shadow-md outline-none"
 				>
 					<ul class="p-1">
-						{#each suggestions as sugg (sugg.mapbox_id)}
+						{#each venueSuggestions as sugg (sugg.mapbox_id)}
 							<li>
 								<button
 									type="button"
 									class="hover:bg-accent hover:text-accent-foreground focus-visible:ring-ring w-full rounded-sm px-2 py-1.5 text-left text-sm focus-visible:ring-2 focus-visible:ring-offset-1"
-									onclick={() => selectSuggestion(sugg)}
+									onclick={() => selectVenueSuggestion(sugg)}
 								>
 									<p class="font-medium">{sugg.name}</p>
 									<p class="text-muted-foreground line-clamp-1 text-[11px]">

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 	import { browser } from '$app/environment';
 	import { toast } from 'svelte-sonner'; // Sonner notifications
 	import * as Card from '$lib/components/ui/card';
@@ -7,6 +7,9 @@
 	import { Input } from '$lib/components/ui/input';
 	import { Separator } from '$lib/components/ui/separator';
 	import { Label } from '$lib/components/ui/label';
+	import type { VenueSuggestion } from '$lib/searchbox';
+	import { MIN_QUERY_LENGTH } from '$lib/searchbox';
+	import { createSearchBoxSession } from '$lib/searchbox-session.svelte';
 
 	let { data } = $props();
 
@@ -17,16 +20,6 @@
 	const COOLDOWN_MS = 3000;
 	const DEBOUNCE_MS = 300;
 	const BLUR_TIMEOUT_MS = 200;
-	const SESSION_IDLE_MS = 10 * 60 * 1000;
-
-	// Search Box suggestion shape (new contract)
-	interface VenueSuggestion {
-		mapbox_id: string;
-		name: string;
-		full_address: string;
-		place_formatted: string;
-		feature_type: string;
-	}
 
 	// --- 1. Client-Side Travel Estimator State ---
 	let clientVenueQuery = $state('');
@@ -39,12 +32,11 @@
 	let selectedMapboxId = $state<string | null>(null);
 	let selectedVenueCoords = $state<{ lat: number; lng: number } | null>(null);
 
-	let suggestions = $state<VenueSuggestion[]>([]);
-	let showSuggestions = $state(false);
+	let venueSuggestions = $state<VenueSuggestion[]>([]);
+	let showVenueSuggestions = $state(false);
 	let noResultsHint = $state(false);
 	let searchTimeout: ReturnType<typeof setTimeout>;
-	let sessionToken = $state('');
-	let sessionIdleTimer: ReturnType<typeof setTimeout> | undefined;
+	const venueSearchSession = createSearchBoxSession();
 
 	// Local cache for estimates (keyed by mapbox_id for picked places; fallback key for free-form)
 	const estimateCache = new Map<
@@ -57,31 +49,16 @@
 			venueLng?: number;
 		}
 	>();
-	// Suggest cache: query+types+session_token scoped in-memory (cleared on rotate)
-	const suggestCache = new Map<string, VenueSuggestion[]>();
 
-	function rotateSessionToken() {
-		try {
-			sessionToken = crypto.randomUUID();
-		} catch {
-			sessionToken = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-		}
-		suggestCache.clear();
-		resetIdleTimer();
-	}
-
-	function resetIdleTimer() {
-		if (sessionIdleTimer) clearTimeout(sessionIdleTimer);
-		sessionIdleTimer = setTimeout(() => {
-			rotateSessionToken();
-		}, SESSION_IDLE_MS);
-	}
+	onDestroy(() => {
+		venueSearchSession.destroy();
+	});
 
 	// --- 2. Leaflet Map Initialization + session token ---
 	onMount(async () => {
-		// Generate per-page session token for Search Box billing (suggest→retrieve billed as one)
+		// Session token already generated via createSearchBoxSession; touch to reset idle window
 		if (browser) {
-			rotateSessionToken();
+			venueSearchSession.touch();
 		}
 		if (browser && data.baseLat && data.baseLng) {
 			const L = await import('leaflet');
@@ -168,7 +145,7 @@
 			};
 			if (selectedMapboxId) {
 				payload.mapboxId = selectedMapboxId;
-				payload.session_token = sessionToken;
+				payload.session_token = venueSearchSession.token;
 			} else {
 				payload.venue = queryTrimmed;
 			}
@@ -205,7 +182,7 @@
 			});
 
 			// Rotate session after successful retrieve billing window
-			if (selectedMapboxId) rotateSessionToken();
+			if (selectedMapboxId) venueSearchSession.rotate();
 
 			toast.success('Travel estimate ready');
 		} catch (err: any) {
@@ -217,77 +194,75 @@
 		}
 	}
 
-	async function handleInput(e: Event) {
+	async function handleVenueInput(e: Event) {
 		const value = (e.target as HTMLInputElement).value;
 		clientVenueQuery = value;
 		// Typing free-form without pick should clear selected mapbox_id so fallback path is used
 		if (selectedMapboxId) {
-			// Only clear if content diverges from selected full_address
-			// We keep it simple: any typing clears unless we just selected
 			selectedMapboxId = null;
 			selectedVenueCoords = null;
 		}
 		clearTimeout(searchTimeout);
-		resetIdleTimer();
-		if (value.length < 3) {
-			suggestions = [];
-			showSuggestions = false;
+		venueSearchSession.touch();
+		if (value.length < MIN_QUERY_LENGTH) {
+			venueSuggestions = [];
+			showVenueSuggestions = false;
 			noResultsHint = false;
 			return;
 		}
 
-		const cacheKey = `${value.toLowerCase()}|venue|${sessionToken}`;
-		if (suggestCache.has(cacheKey)) {
-			suggestions = suggestCache.get(cacheKey)!;
-			showSuggestions = suggestions.length > 0;
-			noResultsHint = suggestions.length === 0;
+		const cacheKey = `${value.toLowerCase()}|venue|${venueSearchSession.token}`;
+		if (venueSearchSession.cache.has(cacheKey)) {
+			venueSuggestions = venueSearchSession.cache.get(cacheKey)!;
+			showVenueSuggestions = venueSuggestions.length > 0;
+			noResultsHint = venueSuggestions.length === 0;
 			return;
 		}
 
 		searchTimeout = setTimeout(async () => {
 			try {
 				const res = await fetch(
-					`/api/search-location?q=${encodeURIComponent(value)}&session_token=${encodeURIComponent(sessionToken)}&types=venue`
+					`/api/search-location?q=${encodeURIComponent(value)}&session_token=${encodeURIComponent(venueSearchSession.token)}&types=venue`
 				);
 				const jsonData = await res.json();
 				if (jsonData.success) {
-					suggestions = (jsonData.suggestions ?? []) as VenueSuggestion[];
-					suggestCache.set(cacheKey, suggestions);
-					showSuggestions = suggestions.length > 0;
-					noResultsHint = suggestions.length === 0;
+					venueSuggestions = (jsonData.suggestions ?? []) as VenueSuggestion[];
+					venueSearchSession.cache.set(cacheKey, venueSuggestions);
+					showVenueSuggestions = venueSuggestions.length > 0;
+					noResultsHint = venueSuggestions.length === 0;
 				} else {
-					toast.error('Could not load location suggestions.');
-					suggestions = [];
-					showSuggestions = false;
+					toast.error('Could not load Venue Suggestions.');
+					venueSuggestions = [];
+					showVenueSuggestions = false;
 					noResultsHint = false;
 				}
 			} catch (err) {
 				console.error('Autocomplete error:', err);
-				toast.error('Could not load location suggestions.');
-				suggestions = [];
-				showSuggestions = false;
+				toast.error('Could not load Venue Suggestions.');
+				venueSuggestions = [];
+				showVenueSuggestions = false;
 				noResultsHint = false;
 			}
 		}, DEBOUNCE_MS);
 	}
 
-	function selectSuggestion(sugg: VenueSuggestion) {
+	function selectVenueSuggestion(sugg: VenueSuggestion) {
 		clientVenueQuery = sugg.full_address || sugg.place_formatted || sugg.name;
 		selectedMapboxId = sugg.mapbox_id;
 		// show selected immediately, then estimate will rotate token
 		resolvedVenueName = sugg.name;
-		showSuggestions = false;
+		showVenueSuggestions = false;
 		noResultsHint = false;
-		suggestions = [];
-		resetIdleTimer();
+		venueSuggestions = [];
+		venueSearchSession.touch();
 		// Optionally trigger the estimate immediately upon selection
 		handleEstimateTravel();
 	}
 
-	// Close suggestions when clicking outside
-	function closeSuggestions() {
+	// Close Venue Suggestions when clicking outside
+	function closeVenueSuggestions() {
 		setTimeout(() => {
-			showSuggestions = false;
+			showVenueSuggestions = false;
 		}, BLUR_TIMEOUT_MS);
 	}
 
@@ -681,7 +656,7 @@
 		<!-- Interactive Travel Surcharge Calculator (only if coordinates & rate are set) -->
 		{#if data.baseLat && data.baseLng && data.ratePerKm > 0}
 			<Card.Root
-				class="animate-in-up relative {showSuggestions ? 'z-50' : 'z-20'} overflow-visible"
+				class="animate-in-up relative {showVenueSuggestions ? 'z-50' : 'z-20'} overflow-visible"
 				style="--i: 2"
 			>
 				<Card.Header>
@@ -698,26 +673,26 @@
 								id="venue-search"
 								placeholder="Type area name..."
 								value={clientVenueQuery}
-								oninput={handleInput}
-								onblur={closeSuggestions}
+								oninput={handleVenueInput}
+								onblur={closeVenueSuggestions}
 								autocomplete="off"
 							/>
 
-							{#if showSuggestions}
+							{#if showVenueSuggestions}
 								<div
 									class="bg-popover text-popover-foreground animate-in fade-in-0 zoom-in-95 absolute z-50 mt-1 w-full rounded-md border shadow-md outline-none"
 								>
 									<ul class="p-1">
-										{#each suggestions as sugg (sugg.mapbox_id)}
+										{#each venueSuggestions as venueSuggestion (venueSuggestion.mapbox_id)}
 											<li>
 												<button
 													type="button"
 													class="hover:bg-accent hover:text-accent-foreground focus-visible:ring-ring w-full rounded-sm px-2 py-1.5 text-left text-sm focus-visible:ring-2 focus-visible:ring-offset-1"
-													onclick={() => selectSuggestion(sugg)}
+													onclick={() => selectVenueSuggestion(venueSuggestion)}
 												>
-													<p class="font-medium">{sugg.name}</p>
+													<p class="font-medium">{venueSuggestion.name}</p>
 													<p class="text-muted-foreground line-clamp-1 text-[11px]">
-														{sugg.place_formatted || sugg.full_address}
+														{venueSuggestion.place_formatted || venueSuggestion.full_address}
 													</p>
 												</button>
 											</li>
