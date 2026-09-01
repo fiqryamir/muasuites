@@ -10,12 +10,15 @@ export const GET: RequestHandler = async ({ url }) => {
 	const sessionToken =
 		url.searchParams.get('session_token') ?? url.searchParams.get('sessionToken') ?? '';
 
+	if (!sessionToken) {
+		return json({ success: false, error: 'Missing session_token' }, { status: 400 });
+	}
+
 	try {
 		const params = new URLSearchParams({
-			access_token: MAPBOX_ACCESS_TOKEN
+			access_token: MAPBOX_ACCESS_TOKEN,
+			session_token: sessionToken
 		});
-		if (sessionToken) params.set('session_token', sessionToken);
-		else params.set('session_token', crypto.randomUUID());
 
 		const retrieveUrl = `https://api.mapbox.com/search/searchbox/v1/retrieve/${encodeURIComponent(mapboxId)}?${params.toString()}`;
 

@@ -22,8 +22,15 @@ export const GET: RequestHandler = async ({ url }) => {
 		);
 	}
 
+	if (!sessionToken) {
+		return json(
+			{ success: false, suggestions: [], features: [], error: 'Missing session_token' },
+			{ status: 400 }
+		);
+	}
+
 	try {
-		const tokenForMapbox = sessionToken || crypto.randomUUID();
+		const tokenForMapbox = sessionToken;
 
 		let mapboxUrl =
 			`https://api.mapbox.com/search/searchbox/v1/suggest?q=${encodeURIComponent(query)}` +

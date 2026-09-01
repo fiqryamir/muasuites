@@ -26,10 +26,17 @@ export const POST: RequestHandler = async ({ request }) => {
 		let venueLng: number | undefined;
 
 		if (mapboxId) {
+			if (!sessionToken) {
+				return json(
+					{ success: false, error: 'Missing session_token for mapboxId retrieve' },
+					{ status: 400 }
+				);
+			}
 			// Preferred path: retrieve via Search Box using forwarded session_token
-			const params = new URLSearchParams({ access_token: MAPBOX_ACCESS_TOKEN });
-			if (sessionToken) params.set('session_token', sessionToken);
-			else params.set('session_token', crypto.randomUUID());
+			const params = new URLSearchParams({
+				access_token: MAPBOX_ACCESS_TOKEN,
+				session_token: sessionToken
+			});
 
 			const retrieveUrl = `https://api.mapbox.com/search/searchbox/v1/retrieve/${encodeURIComponent(mapboxId)}?${params.toString()}`;
 			const retrieveRes = await fetch(retrieveUrl);

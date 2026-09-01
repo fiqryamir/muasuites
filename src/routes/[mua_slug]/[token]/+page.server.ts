@@ -1,6 +1,7 @@
 import { error, fail } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
 import { secureSlotSchema } from '$lib/schemas';
+import { MAPBOX_ACCESS_TOKEN } from '$env/static/private';
 
 export const load: PageServerLoad = async ({ params, locals }) => {
 	const { mua_slug, token } = params;
@@ -116,6 +117,7 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 
 	// Capacity blockers count (for free-tier check) — same self-exclusion
 	const capacityBlockers =
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
 		bookings?.filter((b: any) => {
 			if (b.status === 'CHECKING_OUT' && b.invite_id === invite.id) {
 				return false;
@@ -123,6 +125,7 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 			return true;
 		}) || [];
 
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	const blackoutDateSet = new Set(blackouts?.map((b: any) => b.blackout_date) || []);
 
 	// 7. Dynamic Effective-Plan Capacity Check
@@ -193,26 +196,33 @@ export const actions: Actions = {
 
 		if (data.mapbox_id && typeof data.mapbox_id === 'string' && data.mapbox_id.length > 0) {
 			try {
-				const { MAPBOX_ACCESS_TOKEN } = await import('$env/static/private');
 				const sid = (data.session_token as string | undefined) ?? '';
-				const paramsRetrieve = new URLSearchParams({ access_token: MAPBOX_ACCESS_TOKEN });
-				if (sid) paramsRetrieve.set('session_token', sid);
-				else paramsRetrieve.set('session_token', crypto.randomUUID());
+				if (!sid) {
+					return fail(400, { error: 'Missing session_token for venue retrieve' });
+				}
+				const paramsRetrieve = new URLSearchParams({
+					access_token: MAPBOX_ACCESS_TOKEN,
+					session_token: sid
+				});
 				const retrieveUrl = `https://api.mapbox.com/search/searchbox/v1/retrieve/${encodeURIComponent(data.mapbox_id)}?${paramsRetrieve.toString()}`;
 				const r = await fetch(retrieveUrl);
-				if (r.ok) {
-					const j = await r.json();
-					const feat = j.features?.[0];
-					if (feat?.geometry?.coordinates) {
-						canonicalLng = feat.geometry.coordinates[0];
-						canonicalLat = feat.geometry.coordinates[1];
-						const props = feat.properties ?? feat;
-						canonicalAddress =
-							props.full_address ?? props.address ?? data.venue_full_address ?? data.venue_address;
-					}
+				if (!r.ok) {
+					console.error('retrieve for booking failed', r.status, await r.text().catch(() => ''));
+					return fail(502, { error: 'Could not validate venue. Please reselect it.' });
 				}
+				const j = await r.json();
+				const feat = j.features?.[0];
+				if (!feat?.geometry?.coordinates) {
+					return fail(400, { error: 'Selected venue could not be resolved.' });
+				}
+				canonicalLng = feat.geometry.coordinates[0];
+				canonicalLat = feat.geometry.coordinates[1];
+				const props = feat.properties ?? feat;
+				canonicalAddress =
+					props.full_address ?? props.address ?? data.venue_full_address ?? data.venue_address;
 			} catch (e) {
-				console.warn('retrieve for booking failed, falling back to supplied address', e);
+				console.error('retrieve for booking failed', e);
+				return fail(500, { error: 'Venue validation failed. Please try again.' });
 			}
 		} else if (data.venue_lat != null && data.venue_lng != null) {
 			canonicalLat = data.venue_lat as number;
@@ -264,13 +274,19 @@ export const actions: Actions = {
 		}
 
 		// Persist canonical venue coordinates when available (no schema migration; columns exist)
+		// This follow-up update is required because secure_checkout_slot only writes venue_address;
+		// failure is now surfaced to the client instead of silent warn so DB-row verification does not see NULL coords.
 		if (rpcResult.booking_id && canonicalLat != null && canonicalLng != null) {
 			const { error: updErr } = await supabase
 				.from('bookings')
 				.update({ venue_lat: canonicalLat, venue_lng: canonicalLng, venue_address: venueToStore })
 				.eq('id', rpcResult.booking_id);
-			if (updErr)
-				console.warn('Failed to persist venue_lat/lng for booking', rpcResult.booking_id, updErr);
+			if (updErr) {
+				console.error('Failed to persist venue_lat/lng for booking', rpcResult.booking_id, updErr);
+				return fail(500, {
+					error: 'Booking secured but failed to save venue location. Please contact support.'
+				});
+			}
 		} else if (
 			rpcResult.booking_id &&
 			canonicalAddress &&
@@ -280,7 +296,12 @@ export const actions: Actions = {
 				.from('bookings')
 				.update({ venue_address: venueToStore })
 				.eq('id', rpcResult.booking_id);
-			if (updErr) console.warn('Failed to persist canonical venue_address', updErr);
+			if (updErr) {
+				console.error('Failed to persist canonical venue_address', updErr);
+				return fail(500, {
+					error: 'Booking secured but failed to save venue. Please contact support.'
+				});
+			}
 		}
 
 		const { data: bankConfig } = await supabase
