@@ -1,6 +1,6 @@
 # Spec — Venue autocomplete parity with Mapbox Search Box sandbox
 
-Status: ready-for-agent
+Status: resolved
 
 ## Problem Statement
 
