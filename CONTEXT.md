@@ -23,7 +23,7 @@ A service offering defined by an MUA with a name and price (e.g., "Bridal Makeup
 _Avoid_: Package, offering, tier
 
 **Travel Fee**:
-Additional cost for MUA travel to the client venue, calculated from the MUA's base location and rate per km using Mapbox directions.
+Additional cost for MUA travel to the client venue, calculated from the MUA's Base Location and rate per km using Mapbox directions.
 _Avoid_: Surcharge, transport fee, travel surcharge, delivery fee
 
 **Slot Hold**:
@@ -37,6 +37,24 @@ _Avoid_: Down payment, advance, prepayment
 **Balance**:
 Remaining amount due after the deposit. Typically paid on the event day.
 _Avoid_: Due amount, remaining, remainder
+
+## Location & Travel
+
+**Base Location**:
+The MUA's studio origin from which every Travel Fee is measured. Set once via the Base Location picker.
+_Avoid_: Studio location, home base, origin address
+
+**Venue**:
+The Client's destination for a specific booking (hotel, hall, or home address).
+_Avoid_: Destination, event venue, client address
+
+**Venue Suggestion**:
+One autocomplete result for a Venue or Base Location query. Resolved to a canonical place and coordinates.
+_Avoid_: Suggest list item, dropdown item, location suggestion, place prediction
+
+**Travel Fee Estimate**:
+A client-facing preview of the Travel Fee on the MUA profile page before booking. Not yet a ledger value.
+_Avoid_: Travel estimate, estimate travel cost, travel surcharge preview
 
 ## Onboarding
 
