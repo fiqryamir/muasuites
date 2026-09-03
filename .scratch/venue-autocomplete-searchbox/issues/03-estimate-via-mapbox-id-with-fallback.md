@@ -13,3 +13,5 @@
 
 ## Answer
 Implemented in commits 432691d, 2fad1b2, a889cee. Verification: svelte-check 0 errors, session_token billing, Malaysia centroid bias, mapbox_id shape, cache/cooldown preserved. See diff 034fe50...a889cee.
+
+Follow-up code-review fixes in 1b800b0, bfbe013, f3be499, 4fce044: booking picker no longer does client-side retrieve (server retrieve keeps suggest→retrieve billed as one); shared `searchbox.ts` / `server/mapbox.ts` / `searchbox-session.svelte.ts` domain with encapsulated Venue Suggestion cache (`lookup/store`); speculative types removed; booking persist failure now observable via `venuePersisted/venueWarning` (still succeeds checkout) and session rotates after `secureSlot`. Verification: `npm run check` 0 errors, eslint clean on touched lib/server files.
