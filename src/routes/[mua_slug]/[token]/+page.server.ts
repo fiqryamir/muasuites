@@ -1,7 +1,6 @@
 import { error, fail } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
 import { secureSlotSchema } from '$lib/schemas';
-import { deriveVenueName } from '$lib/searchbox';
 import { retrieveVenueByMapboxId } from '$lib/server/mapbox';
 
 export const load: PageServerLoad = async ({ params, locals }) => {
