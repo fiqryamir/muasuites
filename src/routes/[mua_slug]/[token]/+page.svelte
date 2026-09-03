@@ -337,7 +337,14 @@
 		if (form?.success && form?.bookingId) {
 			bookingId = form.bookingId;
 			checkoutState = 'B';
-			toast.success('Slot secured — please complete your deposit.');
+			// Server retrieve is done — rotate session so suggest→retrieve billed as one
+			// and the Venue Suggestion cache does not leak into a reused token window.
+			bookingVenueSession.rotate();
+			if (form?.venuePersisted === false) {
+				toast.warning(form?.venueWarning ?? 'Venue details need review — booking is secured.');
+			} else {
+				toast.success('Slot secured — please complete your deposit.');
+			}
 			startTimer();
 		}
 		if (form?.error) toast.error(form.error);
@@ -374,9 +381,9 @@
 			return;
 		}
 
-		const suggestCacheKey = `${value.toLowerCase()}|venue|${bookingVenueSession.token}`;
-		if (bookingVenueSession.cache.has(suggestCacheKey)) {
-			venueSuggestions = bookingVenueSession.cache.get(suggestCacheKey)!;
+		const cached = bookingVenueSession.lookupVenueSuggestions(value, 'venue');
+		if (cached) {
+			venueSuggestions = cached;
 			showVenueSuggestions = venueSuggestions.length > 0;
 			venueNoResults = venueSuggestions.length === 0;
 			return;
@@ -390,7 +397,7 @@
 				const jsonData = await res.json();
 				if (jsonData.success) {
 					venueSuggestions = (jsonData.suggestions ?? []) as VenueSuggestion[];
-					bookingVenueSession.cache.set(suggestCacheKey, venueSuggestions);
+					bookingVenueSession.storeVenueSuggestions(value, 'venue', venueSuggestions);
 					showVenueSuggestions = venueSuggestions.length > 0;
 					venueNoResults = venueSuggestions.length === 0;
 				} else {

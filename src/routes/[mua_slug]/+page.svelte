@@ -211,9 +211,9 @@
 			return;
 		}
 
-		const cacheKey = `${value.toLowerCase()}|venue|${venueSearchSession.token}`;
-		if (venueSearchSession.cache.has(cacheKey)) {
-			venueSuggestions = venueSearchSession.cache.get(cacheKey)!;
+		const cached = venueSearchSession.lookupVenueSuggestions(value, 'venue');
+		if (cached) {
+			venueSuggestions = cached;
 			showVenueSuggestions = venueSuggestions.length > 0;
 			noResultsHint = venueSuggestions.length === 0;
 			return;
@@ -227,7 +227,7 @@
 				const jsonData = await res.json();
 				if (jsonData.success) {
 					venueSuggestions = (jsonData.suggestions ?? []) as VenueSuggestion[];
-					venueSearchSession.cache.set(cacheKey, venueSuggestions);
+					venueSearchSession.storeVenueSuggestions(value, 'venue', venueSuggestions);
 					showVenueSuggestions = venueSuggestions.length > 0;
 					noResultsHint = venueSuggestions.length === 0;
 				} else {

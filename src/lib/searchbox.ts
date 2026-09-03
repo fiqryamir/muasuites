@@ -27,28 +27,6 @@ export type VenueSuggestion = {
 	feature_type: string;
 };
 
-export type Coordinates = {
-	lat: number;
-	lng: number;
-};
-
-/**
- * VenueSelection — the Data Clump that previously travelled as 4 separate
- * fields (mapbox_id + venue_lat/lng + venue_full_address + session_token).
- * Hidden inputs still serialize separately for FormData, but server & client
- * now pass this bundled type where possible.
- */
-export type VenueSelection = {
-	mapboxId: string | null;
-	fullAddress: string;
-	coordinates: Coordinates | null;
-	sessionToken: string;
-};
-
-/** Branded primitives to avoid Primitive Obsession on raw strings */
-export type MapboxId = string & { readonly __brand: 'MapboxId' };
-export type SessionToken = string & { readonly __brand: 'SessionToken' };
-
 export type VenueSource =
 	| { kind: 'mapbox'; mapboxId: string; sessionToken: string }
 	| { kind: 'geocode'; query: string }
@@ -98,8 +76,8 @@ export function buildRetrieveUrl(opts: {
 	return `${opts.baseUrl}/search/searchbox/v1/retrieve/${encodeURIComponent(opts.mapboxId)}?access_token=${opts.accessToken}&session_token=${encodeURIComponent(opts.sessionToken)}`;
 }
 
-export function parseSuggestItem(s: Record<string, unknown>): VenueSuggestion {
-	const rec = s as {
+export function parseSuggestItem(item: Record<string, unknown>): VenueSuggestion {
+	const rec = item as {
 		mapbox_id: string;
 		name: string;
 		full_address?: string;
@@ -137,13 +115,18 @@ export function parseRetrieveFeature(feature: Record<string, unknown>): Retrieve
 	return { lng, lat, name, full_address, place_formatted, feature_type };
 }
 
+function firstAddressSegment(value: string, fallback: string): string {
+	const first = value.split(',')[0]?.trim();
+	return first || fallback;
+}
+
 export function deriveVenueName(retrieve: RetrieveResult): string {
-	if (retrieve.full_address && retrieve.full_address.includes(',')) {
-		return retrieve.full_address.split(',')[0].trim();
+	if (retrieve.full_address) {
+		return firstAddressSegment(retrieve.full_address, retrieve.name || retrieve.full_address);
 	}
 	return retrieve.name || retrieve.full_address;
 }
 
 export function deriveGeocodeVenueName(feature: { place_name?: string; text?: string }, fallback: string): string {
-	return feature.place_name?.split(',')[0]?.trim() || feature.text || fallback;
+	return firstAddressSegment(feature.place_name ?? '', feature.text || fallback);
 }

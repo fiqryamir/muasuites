@@ -189,8 +189,8 @@ export const actions: Actions = {
 
 		const data = validation.data;
 
-		// Resolve canonical venue via Search Box retrieve — bundled into VenueSelection
-		// to avoid Data Clumps passing 4 loose fields (mapbox_id + lat/lng + full_address + token)
+		// Resolve canonical venue via Search Box retrieve with the same session_token
+		// used for suggest, so suggest→retrieve bills as one.
 		let canonicalAddress: string | undefined;
 		let canonicalLat: number | null | undefined;
 		let canonicalLng: number | null | undefined;
@@ -269,9 +269,12 @@ export const actions: Actions = {
 
 		// Persist canonical venue coordinates when available (no migration; columns exist).
 		// This follow-up update is required because secure_checkout_slot only writes
-		// venue_address. On failure we warn but do not 400/500 the client — the booking
-		// is already committed (CHECKING_OUT) and coordinates can be backfilled; hard-failing
-		// here would surface an error after a successful reservation, which is confusing.
+		// venue_address. The booking is already committed (CHECKING_OUT) at this point,
+		// so a persist failure must not fail checkout — but it must stay observable via
+		// venuePersisted/venueWarning so the DB-row guarantee (venue_lat/lng non-null
+		// when picked) can be monitored and backfilled.
+		let venuePersisted = true;
+		let venueWarning: string | undefined;
 		if (rpcResult.booking_id && canonicalLat != null && canonicalLng != null) {
 			const { error: updErr } = await supabase
 				.from('bookings')
@@ -279,7 +282,8 @@ export const actions: Actions = {
 				.eq('id', rpcResult.booking_id);
 			if (updErr) {
 				console.error('Failed to persist venue_lat/lng for booking', rpcResult.booking_id, updErr);
-				// Do not fail the checkout — booking is secured; log for backfill.
+				venuePersisted = false;
+				venueWarning = 'Venue coordinates could not be saved — booking is secured.';
 			}
 		} else if (
 			rpcResult.booking_id &&
@@ -292,6 +296,8 @@ export const actions: Actions = {
 				.eq('id', rpcResult.booking_id);
 			if (updErr) {
 				console.error('Failed to persist canonical venue_address', updErr);
+				venuePersisted = false;
+				venueWarning = 'Venue address could not be saved — booking is secured.';
 			}
 		}
 
@@ -313,7 +319,9 @@ export const actions: Actions = {
 		return {
 			success: true,
 			bookingId: rpcResult.booking_id,
-			bankConfig
+			bankConfig,
+			venuePersisted,
+			venueWarning
 		};
 	},
 

@@ -54,12 +54,12 @@ export const POST: RequestHandler = async ({ request }) => {
 					outcome.status === 404 ? 'Selected place not found.' : 'Could not retrieve selected place.';
 				return json({ success: false, error: message }, { status: outcome.status });
 			}
-			const r = outcome.result;
-			destLng = r.lng;
-			destLat = r.lat;
-			venueLng = r.lng;
-			venueLat = r.lat;
-			venueName = deriveVenueName(r);
+			const retrieved = outcome.result;
+			destLng = retrieved.lng;
+			destLat = retrieved.lat;
+			venueLng = retrieved.lng;
+			venueLat = retrieved.lat;
+			venueName = deriveVenueName(retrieved);
 		} else if (venueSource.kind === 'geocode') {
 			// Fallback path: geocode free-form string with country=my limit=1
 			const geocodeUrl = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(venueSource.query)}.json?access_token=${MAPBOX_ACCESS_TOKEN}&limit=1&country=my`;

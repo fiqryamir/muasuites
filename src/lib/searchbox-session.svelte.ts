@@ -1,20 +1,29 @@
-import { generateSessionToken, SESSION_IDLE_MS, type VenueSuggestion } from '$lib/searchbox';
+import {
+	generateSessionToken,
+	SESSION_IDLE_MS,
+	type SearchBoxTypes,
+	type VenueSuggestion
+} from '$lib/searchbox';
 
 /**
  * Reusable Search Box session lifecycle — replaces duplicated rotate + idle +
- * suggest-cache logic that lived in 3 components (public estimator, base
+ * Venue Suggestion cache logic that lived in 3 components (public estimator, base
  * location picker, booking venue picker). Each caller gets its own token,
- * idle timer, and in-memory suggest cache so sessions stay isolated.
+ * idle timer, and in-memory Venue Suggestion cache so sessions stay isolated.
  */
 export function createSearchBoxSession() {
 	let sessionToken = $state(generateSessionToken());
 	let idleTimer: ReturnType<typeof setTimeout> | undefined = $state(undefined);
 	// eslint-disable-next-line svelte/prefer-svelte-reactivity -- cache is internal, not template-reactive
-	const suggestCache = new Map<string, VenueSuggestion[]>();
+	const venueSuggestionCache = new Map<string, VenueSuggestion[]>();
+
+	function buildCacheKey(query: string, types: SearchBoxTypes): string {
+		return `${query.trim().toLowerCase()}|${types}`;
+	}
 
 	function rotate(): void {
 		sessionToken = generateSessionToken();
-		suggestCache.clear();
+		venueSuggestionCache.clear();
 		scheduleIdle();
 	}
 
@@ -24,8 +33,19 @@ export function createSearchBoxSession() {
 	}
 
 	function touch(): void {
-		if (idleTimer) clearTimeout(idleTimer);
-		idleTimer = setTimeout(rotate, SESSION_IDLE_MS);
+		scheduleIdle();
+	}
+
+	function lookupVenueSuggestions(query: string, types: SearchBoxTypes): VenueSuggestion[] | undefined {
+		return venueSuggestionCache.get(buildCacheKey(query, types));
+	}
+
+	function storeVenueSuggestions(
+		query: string,
+		types: SearchBoxTypes,
+		suggestions: VenueSuggestion[]
+	): void {
+		venueSuggestionCache.set(buildCacheKey(query, types), suggestions);
 	}
 
 	function destroy(): void {
@@ -42,7 +62,8 @@ export function createSearchBoxSession() {
 		set token(v: string) {
 			sessionToken = v;
 		},
-		cache: suggestCache,
+		lookupVenueSuggestions,
+		storeVenueSuggestions,
 		rotate,
 		touch,
 		destroy
