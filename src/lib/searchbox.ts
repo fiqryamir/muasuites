@@ -6,6 +6,11 @@
  *
  * This module gathers what was previously duplicated across 3 client components
  * and 4 server routes (Duplicated Code / Data Clumps / Primitive Obsession).
+ *
+ * Naming note: `session_token` throughout this module is the Mapbox Search Box
+ * billing token (per-page UUID, suggest→retrieve billed as one). It is distinct
+ * from the Booking Link Token (CONTEXT.md Technical Concepts) and is never
+ * used for auth.
  */
 
 export const MAPBOX_MY_PROXIMITY = '101.9758,4.2105';
@@ -106,7 +111,8 @@ export function parseRetrieveFeature(feature: Record<string, unknown>): Retrieve
 	if (!coords || coords.length < 2) return null;
 	const [lng, lat] = coords as [number, number];
 	const props = (f.properties ?? f) as Record<string, unknown>;
-	const name = (props.name as string) ?? (props.name_preferred as string) ?? (f.name as string) ?? '';
+	const name =
+		(props.name as string) ?? (props.name_preferred as string) ?? (f.name as string) ?? '';
 	const full_address =
 		(props.full_address as string) ?? (props.address as string) ?? (f.place_name as string) ?? '';
 	const place_formatted =
@@ -127,6 +133,28 @@ export function deriveVenueName(retrieve: RetrieveResult): string {
 	return retrieve.name || retrieve.full_address;
 }
 
-export function deriveGeocodeVenueName(feature: { place_name?: string; text?: string }, fallback: string): string {
+export function deriveGeocodeVenueName(
+	feature: { place_name?: string; text?: string },
+	fallback: string
+): string {
 	return firstAddressSegment(feature.place_name ?? '', feature.text || fallback);
+}
+
+/**
+ * Single client-side suggest fetch shared by all three pickers (public Venue
+ * estimator, Base Location picker, booking Venue picker). Replaces the
+ * triplicated fetch→parse blocks; debounce, min-length, cache, and error UX
+ * stay per-component. Throws on proxy/transport failure so callers toast.
+ */
+export async function suggestVenues(
+	query: string,
+	sessionToken: string,
+	types: SearchBoxTypes
+): Promise<VenueSuggestion[]> {
+	const res = await fetch(
+		`/api/search-location?q=${encodeURIComponent(query)}&session_token=${encodeURIComponent(sessionToken)}&types=${types}`
+	);
+	const data = await res.json();
+	if (!data.success) throw new Error(data.error || 'Suggest failed');
+	return (data.suggestions ?? []) as VenueSuggestion[];
 }

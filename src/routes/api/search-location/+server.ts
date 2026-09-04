@@ -55,15 +55,16 @@ export const GET: RequestHandler = async ({ url }) => {
 		const data = (await res.json()) as { suggestions?: Record<string, unknown>[] };
 		const suggestions: VenueSuggestion[] = (data.suggestions ?? []).map(parseSuggestItem);
 
-		// Provide both `suggestions` (new shape) and `features` (legacy empty) for backward compat
+		// Provide both `suggestions` (canonical shape) and `features` (legacy
+		// readers). ADR-0004 retires {text, place_name, center}: coordinates now
+		// come via retrieve, so no `center` is sent — only the display fields
+		// old callers need to keep rendering while they migrate.
 		return json({
 			success: true,
 			suggestions,
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any
-			features: suggestions.map((s: any) => ({
+			features: suggestions.map((s) => ({
 				text: s.name,
-				place_name: s.full_address || s.place_formatted,
-				center: undefined
+				place_name: s.full_address || s.place_formatted
 			}))
 		});
 	} catch (err) {

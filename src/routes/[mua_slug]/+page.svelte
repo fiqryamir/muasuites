@@ -8,7 +8,7 @@
 	import { Separator } from '$lib/components/ui/separator';
 	import { Label } from '$lib/components/ui/label';
 	import type { VenueSuggestion } from '$lib/searchbox';
-	import { MIN_QUERY_LENGTH } from '$lib/searchbox';
+	import { MIN_QUERY_LENGTH, suggestVenues } from '$lib/searchbox';
 	import { createSearchBoxSession } from '$lib/searchbox-session.svelte';
 
 	let { data } = $props();
@@ -221,21 +221,11 @@
 
 		searchTimeout = setTimeout(async () => {
 			try {
-				const res = await fetch(
-					`/api/search-location?q=${encodeURIComponent(value)}&session_token=${encodeURIComponent(venueSearchSession.token)}&types=venue`
-				);
-				const jsonData = await res.json();
-				if (jsonData.success) {
-					venueSuggestions = (jsonData.suggestions ?? []) as VenueSuggestion[];
-					venueSearchSession.storeVenueSuggestions(value, 'venue', venueSuggestions);
-					showVenueSuggestions = venueSuggestions.length > 0;
-					noResultsHint = venueSuggestions.length === 0;
-				} else {
-					toast.error('Could not load Venue Suggestions.');
-					venueSuggestions = [];
-					showVenueSuggestions = false;
-					noResultsHint = false;
-				}
+				const suggestions = await suggestVenues(value, venueSearchSession.token, 'venue');
+				venueSuggestions = suggestions;
+				venueSearchSession.storeVenueSuggestions(value, 'venue', venueSuggestions);
+				showVenueSuggestions = venueSuggestions.length > 0;
+				noResultsHint = venueSuggestions.length === 0;
 			} catch (err) {
 				console.error('Autocomplete error:', err);
 				toast.error('Could not load Venue Suggestions.');

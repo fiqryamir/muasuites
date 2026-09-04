@@ -18,7 +18,9 @@ export function createSearchBoxSession() {
 	const venueSuggestionCache = new Map<string, VenueSuggestion[]>();
 
 	function buildCacheKey(query: string, types: SearchBoxTypes): string {
-		return `${query.trim().toLowerCase()}|${types}`;
+		// Spec: suggest cache keyed by q+types+session_token in memory only.
+		// rotate() also clears the map, so a stale session can never be served.
+		return `${sessionToken}|${query.trim().toLowerCase()}|${types}`;
 	}
 
 	function rotate(): void {
@@ -33,10 +35,15 @@ export function createSearchBoxSession() {
 	}
 
 	function touch(): void {
+		// Semantic reset of the 10-minute billing idle window (not just a
+		// delegate: callers signal user activity without knowing the timer).
 		scheduleIdle();
 	}
 
-	function lookupVenueSuggestions(query: string, types: SearchBoxTypes): VenueSuggestion[] | undefined {
+	function lookupVenueSuggestions(
+		query: string,
+		types: SearchBoxTypes
+	): VenueSuggestion[] | undefined {
 		return venueSuggestionCache.get(buildCacheKey(query, types));
 	}
 
@@ -58,9 +65,6 @@ export function createSearchBoxSession() {
 	return {
 		get token(): string {
 			return sessionToken;
-		},
-		set token(v: string) {
-			sessionToken = v;
 		},
 		lookupVenueSuggestions,
 		storeVenueSuggestions,

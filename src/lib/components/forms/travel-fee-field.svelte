@@ -11,7 +11,7 @@
 	} from '$lib/components/ui/input-group';
 	import { Field, FieldLabel } from '$lib/components/ui/field';
 	import type { VenueSuggestion } from '$lib/searchbox';
-	import { MIN_QUERY_LENGTH } from '$lib/searchbox';
+	import { MIN_QUERY_LENGTH, suggestVenues } from '$lib/searchbox';
 	import { createSearchBoxSession } from '$lib/searchbox-session.svelte';
 
 	let {
@@ -90,23 +90,13 @@
 		searchTimeout = setTimeout(async () => {
 			searching = true;
 			try {
-				const res = await fetch(
-					`/api/search-location?q=${encodeURIComponent(value)}&session_token=${encodeURIComponent(searchSession.token)}&types=base`
-				);
-				const data = await res.json();
-				if (data.success) {
-					venueSuggestions = (data.suggestions ?? []) as VenueSuggestion[];
-					searchSession.storeVenueSuggestions(value, 'base', venueSuggestions);
-					showVenueSuggestions = venueSuggestions.length > 0;
-					noResultsHint = venueSuggestions.length === 0;
-				} else {
-					toast.error('Could not load Venue Suggestions.');
-					venueSuggestions = [];
-					showVenueSuggestions = false;
-					noResultsHint = false;
-				}
+				const suggestions = await suggestVenues(value, searchSession.token, 'base');
+				venueSuggestions = suggestions;
+				searchSession.storeVenueSuggestions(value, 'base', venueSuggestions);
+				showVenueSuggestions = venueSuggestions.length > 0;
+				noResultsHint = venueSuggestions.length === 0;
 			} catch {
-				toast.error('Could not load Venue Suggestions.');
+				toast.error('Could not load Base Location suggestions.');
 				venueSuggestions = [];
 				showVenueSuggestions = false;
 				noResultsHint = false;
@@ -117,29 +107,29 @@
 	}
 
 	async function selectVenueSuggestion(sugg: VenueSuggestion) {
-		// Retrieve precise coordinates via Search Box retrieve using shared session_token
+		// Retrieve precise coordinates via Search Box retrieve using shared session_token.
+		// On failure keep the last-known-good base untouched: persisting a new
+		// place name with stale (or null) coordinates would corrupt the origin
+		// every Travel Fee Estimate is measured from.
 		try {
 			const res = await fetch(
 				`/api/retrieve-location?id=${encodeURIComponent(sugg.mapbox_id)}&session_token=${encodeURIComponent(searchSession.token)}`
 			);
 			const data = await res.json();
-			if (data.success && data.lng != null && data.lat != null) {
-				placeName = data.full_address || sugg.full_address || sugg.place_formatted || sugg.name;
-				lng = data.lng;
-				lat = data.lat;
-			} else {
-				// Fallback to suggestion metadata if retrieve fails
-				placeName = sugg.full_address || sugg.place_formatted || sugg.name;
-				// No coordinates available without retrieve; keep previous or null
-			}
+			if (!data.success || data.lng == null || data.lat == null) throw new Error('Retrieve failed');
+			placeName = data.full_address || sugg.full_address || sugg.place_formatted || sugg.name;
+			lng = data.lng;
+			lat = data.lat;
+			// Rotate only after a successful retrieve so suggest→retrieve bills
+			// as one and a failed pick stays in-session for retry.
+			searchSession.rotate();
 		} catch {
-			placeName = sugg.full_address || sugg.place_formatted || sugg.name;
+			toast.error('Could not resolve that place. Please try again.');
 		}
 		query = placeName;
 		showVenueSuggestions = false;
 		noResultsHint = false;
 		venueSuggestions = [];
-		searchSession.rotate();
 	}
 
 	function clearLocation() {

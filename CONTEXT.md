@@ -112,6 +112,10 @@ _Avoid_: Expired, voided, revoked
 A unique identifier embedded in the booking link URL. Validates the link is legitimate, unused, and not expired before allowing checkout access.
 _Avoid_: Invite token, access token, session token
 
+**Mapbox Search Session**:
+A per-page-load UUID sent as the Mapbox Search Box `session_token` on every suggest call and the retrieve/estimate that consumes the pick, so the pair is billed as one. Rotated after a successful retrieve and after 10 minutes idle. Never used for auth; unrelated to the Booking Link Token despite the shared `session_token` wire name (which Mapbox's API requires).
+_Avoid_: Booking Link Token, session token (bare — always qualify as Mapbox Search Session token)
+
 **Slot Locking**:
 A database row-level lock on the MUA's configuration during checkout. Prevents concurrent booking attempts for the same date slot.
 _Avoid_: Row lock, mutex, serialization

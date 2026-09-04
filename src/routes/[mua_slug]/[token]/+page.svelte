@@ -17,7 +17,7 @@
 	import { Field, FieldGroup, FieldLabel } from '$lib/components/ui/field';
 	import { z } from 'zod';
 	import type { VenueSuggestion } from '$lib/searchbox';
-	import { MIN_QUERY_LENGTH } from '$lib/searchbox';
+	import { MIN_QUERY_LENGTH, suggestVenues } from '$lib/searchbox';
 	import { createSearchBoxSession } from '$lib/searchbox-session.svelte';
 
 	let { data, form } = $props();
@@ -339,7 +339,9 @@
 			checkoutState = 'B';
 			// Server retrieve is done — rotate session so suggest→retrieve billed as one
 			// and the Venue Suggestion cache does not leak into a reused token window.
-			bookingVenueSession.rotate();
+			// Only when a suggestion was picked (server retrieves solely on mapboxId);
+			// free-form checkouts never consumed the session.
+			if (venueMapboxId) bookingVenueSession.rotate();
 			if (form?.venuePersisted === false) {
 				toast.warning(form?.venueWarning ?? 'Venue details need review — booking is secured.');
 			} else {
@@ -391,21 +393,11 @@
 
 		venueSearchTimeout = setTimeout(async () => {
 			try {
-				const res = await fetch(
-					`/api/search-location?q=${encodeURIComponent(value)}&session_token=${encodeURIComponent(bookingVenueSession.token)}&types=venue`
-				);
-				const jsonData = await res.json();
-				if (jsonData.success) {
-					venueSuggestions = (jsonData.suggestions ?? []) as VenueSuggestion[];
-					bookingVenueSession.storeVenueSuggestions(value, 'venue', venueSuggestions);
-					showVenueSuggestions = venueSuggestions.length > 0;
-					venueNoResults = venueSuggestions.length === 0;
-				} else {
-					toast.error('Could not load Venue Suggestions.');
-					venueSuggestions = [];
-					showVenueSuggestions = false;
-					venueNoResults = false;
-				}
+				const suggestions = await suggestVenues(value, bookingVenueSession.token, 'venue');
+				venueSuggestions = suggestions;
+				bookingVenueSession.storeVenueSuggestions(value, 'venue', venueSuggestions);
+				showVenueSuggestions = venueSuggestions.length > 0;
+				venueNoResults = venueSuggestions.length === 0;
 			} catch {
 				toast.error('Could not load Venue Suggestions.');
 				venueSuggestions = [];

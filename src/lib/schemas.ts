@@ -35,6 +35,9 @@ export const secureSlotSchema = z.object({
 	),
 	venue_full_address: z.string().optional().nullable(),
 	mapbox_id: z.string().optional().nullable(),
+	// Mapbox Search Box billing token pairing this checkout's suggest→retrieve
+	// (Mapbox API `session_token`). Distinct from the Booking Link Token
+	// (CONTEXT.md) — never used for auth, only so the pair is billed as one.
 	session_token: z.string().optional().nullable()
 });
 
