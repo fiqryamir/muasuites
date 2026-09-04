@@ -93,9 +93,9 @@ export function parseSuggestItem(item: Record<string, unknown>): VenueSuggestion
 	return {
 		mapbox_id: rec.mapbox_id,
 		name: rec.name,
-		full_address: (rec.full_address ?? rec.place_formatted ?? '') as string,
-		place_formatted: (rec.place_formatted ?? rec.full_address ?? '') as string,
-		feature_type: (rec.feature_type ?? rec.poi_category?.[0] ?? '') as string
+		full_address: (rec.full_address || rec.place_formatted || '') as string,
+		place_formatted: (rec.place_formatted || rec.full_address || '') as string,
+		feature_type: (rec.feature_type || rec.poi_category?.[0] || '') as string
 	};
 }
 
@@ -112,12 +112,12 @@ export function parseRetrieveFeature(feature: Record<string, unknown>): Retrieve
 	const [lng, lat] = coords as [number, number];
 	const props = (f.properties ?? f) as Record<string, unknown>;
 	const name =
-		(props.name as string) ?? (props.name_preferred as string) ?? (f.name as string) ?? '';
+		(props.name as string) || (props.name_preferred as string) || (f.name as string) || '';
 	const full_address =
-		(props.full_address as string) ?? (props.address as string) ?? (f.place_name as string) ?? '';
+		(props.full_address as string) || (props.address as string) || (f.place_name as string) || '';
 	const place_formatted =
-		(props.place_formatted as string) ?? (props.place as string) ?? full_address;
-	const feature_type = (props.feature_type as string) ?? (props.feature as string) ?? '';
+		(props.place_formatted as string) || (props.place as string) || full_address;
+	const feature_type = (props.feature_type as string) || (props.feature as string) || '';
 	return { lng, lat, name, full_address, place_formatted, feature_type };
 }
 
@@ -137,7 +137,7 @@ export function deriveGeocodeVenueName(
 	feature: { place_name?: string; text?: string },
 	fallback: string
 ): string {
-	return firstAddressSegment(feature.place_name ?? '', feature.text || fallback);
+	return firstAddressSegment(feature.place_name || '', feature.text || fallback);
 }
 
 /**

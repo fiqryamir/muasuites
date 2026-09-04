@@ -114,8 +114,13 @@
 
 		if (cooldownActive) return;
 
-		// Cache key: mapbox_id when picked, otherwise normalized query lower-case
-		const cacheKey = selectedMapboxId ? selectedMapboxId : queryTrimmed.toLowerCase();
+		// Cache key: mapbox_id when picked, otherwise normalized query lower-case —
+		// always scoped to the MUA origin + rate so a moved base or changed rate
+		// never serves a stale fee from a previous origin.
+		const originKey = `${data.baseLat},${data.baseLng}@${data.ratePerKm}`;
+		const cacheKey = selectedMapboxId
+			? `${selectedMapboxId}|${originKey}`
+			: `${queryTrimmed.toLowerCase()}|${originKey}`;
 		if (estimateCache.has(cacheKey)) {
 			const cached = estimateCache.get(cacheKey)!;
 			estimatedDistance = cached.distanceKm;
@@ -228,7 +233,7 @@
 				noResultsHint = venueSuggestions.length === 0;
 			} catch (err) {
 				console.error('Autocomplete error:', err);
-				toast.error('Could not load Venue Suggestions.');
+				toast.error('Could not load location suggestions.');
 				venueSuggestions = [];
 				showVenueSuggestions = false;
 				noResultsHint = false;

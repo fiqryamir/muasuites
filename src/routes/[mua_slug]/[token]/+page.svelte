@@ -399,7 +399,7 @@
 				showVenueSuggestions = venueSuggestions.length > 0;
 				venueNoResults = venueSuggestions.length === 0;
 			} catch {
-				toast.error('Could not load Venue Suggestions.');
+				toast.error('Could not load location suggestions.');
 				venueSuggestions = [];
 				showVenueSuggestions = false;
 				venueNoResults = false;

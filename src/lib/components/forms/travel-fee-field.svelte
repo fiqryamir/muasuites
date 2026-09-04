@@ -59,11 +59,17 @@
 		ratePerKm = parseFloat(rateStr) || 0;
 	});
 
+	// Tracks the last committed base location so the search box only syncs
+	// when it changed externally (prefill / reload / clear) — never clobbering
+	// the MUA's in-progress typing or a failed pick they may retry from.
+	let syncedPlaceName = $state(placeName);
+
 	// Sync the search box with an externally-changed base location, but never
 	// while the MUA is typing in it.
 	$effect(() => {
-		if (!focused && placeName !== query) {
-			query = placeName;
+		if (placeName !== syncedPlaceName) {
+			syncedPlaceName = placeName;
+			if (!focused) query = placeName;
 		}
 	});
 
@@ -96,7 +102,7 @@
 				showVenueSuggestions = venueSuggestions.length > 0;
 				noResultsHint = venueSuggestions.length === 0;
 			} catch {
-				toast.error('Could not load Base Location suggestions.');
+				toast.error('Could not load location suggestions.');
 				venueSuggestions = [];
 				showVenueSuggestions = false;
 				noResultsHint = false;
@@ -110,23 +116,26 @@
 		// Retrieve precise coordinates via Search Box retrieve using shared session_token.
 		// On failure keep the last-known-good base untouched: persisting a new
 		// place name with stale (or null) coordinates would corrupt the origin
-		// every Travel Fee Estimate is measured from.
+		// every Travel Fee Estimate is measured from. The visible input keeps the
+		// attempted place so the user sees what failed instead of snapping back.
+		const attempted = sugg.full_address || sugg.place_formatted || sugg.name;
 		try {
 			const res = await fetch(
 				`/api/retrieve-location?id=${encodeURIComponent(sugg.mapbox_id)}&session_token=${encodeURIComponent(searchSession.token)}`
 			);
 			const data = await res.json();
 			if (!data.success || data.lng == null || data.lat == null) throw new Error('Retrieve failed');
-			placeName = data.full_address || sugg.full_address || sugg.place_formatted || sugg.name;
+			placeName = data.full_address || attempted;
 			lng = data.lng;
 			lat = data.lat;
 			// Rotate only after a successful retrieve so suggest→retrieve bills
 			// as one and a failed pick stays in-session for retry.
 			searchSession.rotate();
+			query = placeName;
 		} catch {
 			toast.error('Could not resolve that place. Please try again.');
+			query = attempted;
 		}
-		query = placeName;
 		showVenueSuggestions = false;
 		noResultsHint = false;
 		venueSuggestions = [];
