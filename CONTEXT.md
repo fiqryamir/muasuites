@@ -81,8 +81,54 @@ The end of a paid period. A 7-day grace period follows, during which the MUA is 
 _Avoid_: Lapse, plan end, overdue plan
 
 **Founder Plan**:
-The FOUNDER tier: identical to PRO but free for life, manually granted to ~5–10 launch MUAs. Grants are revocable at the founder's discretion.
+The FOUNDER tier: current PRO parity, free for life, and manually granted to up to 10 launch MUAs after written acceptance. Launch grants are revocable only for documented serious terms or acceptable-use breach, fraud, abuse, unlawful use, deliberate harm, or abandonment after contact attempts.
 _Avoid_: Lifetime deal, beta tier, pro bono
+
+## Commercialization
+
+**Founder Beta**:
+A private validation cohort of up to 10 Founding MUAs before paid public launch. Entry requires written acceptance; participation asks for lightweight real-use feedback and receives priority best-effort support without an SLA. Real-client use requires the relevant privacy and security terms; public use of a participant's identity or outputs requires separate written consent.
+_Avoid_: Public launch, free trial, lifetime deal
+
+**Founding MUA**:
+An MUA participating in the private Founder Beta and receiving the Founder Plan. A Founding MUA is a beta participant, not a founder, owner, investor, or decision-maker for MUASuites.
+_Avoid_: Founder (when referring to a beta participant), cofounder, investor
+
+**Paid Public Launch**:
+The point at which MUASuites accepts paid MUA customers. It follows the Founder Beta and requires the chosen business structure, dedicated business banking, professional legal/accounting review, and the agreed tax/invoicing process.
+_Avoid_: Beta, soft launch, release
+
+**Beta Graduation Gate**:
+The evidence and hard readiness conditions required before moving from the Founder Beta to Paid Public Launch. It includes cohort usage, repeat value, paid intent, reliability, sustainable support, and legal, privacy, banking, and payment readiness.
+_Avoid_: Launch date, product-market fit, release checklist
+
+**Paid-Intent Commitment**:
+An explicit commitment from a non-Founder MUA to start the published paid plan when public launch opens. Interest, praise, or an interview statement alone is not a commitment.
+_Avoid_: Lead, compliment, survey interest
+
+**Business Structure**:
+The legal form under which MUASuites operates. The initial launch route is a sole proprietorship, with later incorporation reconsidered when liability or growth materially changes.
+_Avoid_: Company (when referring specifically to a sole proprietorship), account
+
+**MUA-Owned Client Terms**:
+The terms governing the makeup service relationship between an MUA and a Client. The MUA sets the service, cancellation, rescheduling, and refund policies; MUASuites may provide a template without becoming the service provider.
+_Avoid_: MUASuites service terms, platform guarantee
+
+**Platform Role Notice**:
+A client-facing explanation that identifies the MUA as the makeup service provider and payment recipient, and MUASuites as the booking software platform.
+_Avoid_: Marketplace disclaimer, payment-provider notice
+
+**Proof of Transfer**:
+A Client-supplied image or record showing an attempted transfer directly to the MUA. It is evidence submitted for review, not a payment receipt issued or verified by MUASuites.
+_Avoid_: Payment receipt, payment confirmation, bank receipt
+
+**MUA Payment Confirmation**:
+The MUA's explicit confirmation, after reviewing a Proof of Transfer, that the Client's money was received. Uploading proof alone is not confirmation.
+_Avoid_: Automatic payment confirmation, platform verification
+
+**Invite-Only Payment Surface**:
+A Client payment surface presented only inside an MUA-controlled, one-time Booking Link rather than on a public MUA profile. A personal QR may appear there only under a provider-confirmed exception; public payment surfaces require a business identity.
+_Avoid_: Public payment page, merchant storefront
 
 ## Booking Lifecycle
 
